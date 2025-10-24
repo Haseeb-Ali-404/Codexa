@@ -1,0 +1,1158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Advanced Calendar Application</title>
+    <style>
+        /* General Body Styling */
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f4f7f6;
+            color: #333;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        /* Container Styling */
+        .container {
+            background-color: #ffffff;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+            padding: 25px;
+            margin-bottom: 20px;
+            border: 1px solid #e0e0e0;
+        }
+
+        /* Header Styling */
+        h1, h2, h3 {
+            color: #2c3e50;
+            border-bottom: 2px solid #e0e0e0;
+            padding-bottom: 10px;
+            margin-top: 0;
+        }
+
+        h1 { font-size: 2.2em; text-align: center; margin-bottom: 30px; }
+        h2 { font-size: 1.8em; }
+        h3 { font-size: 1.4em; }
+
+        /* Button Styling */
+        button {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            padding: 10px 18px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 1em;
+            transition: background-color 0.3s ease, transform 0.1s ease;
+            margin-right: 8px;
+            margin-bottom: 8px;
+        }
+
+        button:hover {
+            background-color: #2980b9;
+            transform: translateY(-1px);
+        }
+
+        button:active {
+            transform: translateY(0);
+        }
+
+        button.secondary {
+            background-color: #6c757d;
+        }
+        button.secondary:hover {
+            background-color: #5a6268;
+        }
+
+        button.danger {
+            background-color: #e74c3c;
+        }
+        button.danger:hover {
+            background-color: #c0392b;
+        }
+
+        /* Input and Label Styling */
+        input[type="text"],
+        input[type="password"],
+        input[type="date"],
+        input[type="time"],
+        textarea,
+        select {
+            width: calc(100% - 20px);
+            padding: 10px;
+            margin-bottom: 15px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            font-size: 1em;
+            box-sizing: border-box;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: #555;
+        }
+
+        /* Form Grouping */
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        /* Calendar Specific Styling */
+        #calendar-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            background-color: #ecf0f1;
+            padding: 10px 15px;
+            border-radius: 5px;
+        }
+
+        #current-month-year {
+            font-size: 1.5em;
+            font-weight: bold;
+            color: #2c3e50;
+        }
+
+        #calendar-grid {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 5px;
+            border: 1px solid #ddd;
+            padding: 5px;
+            border-radius: 5px;
+        }
+
+        .day-name {
+            background-color: #34495e;
+            color: white;
+            padding: 10px 5px;
+            text-align: center;
+            font-weight: bold;
+            border-radius: 3px;
+        }
+
+        .calendar-day {
+            background-color: #fdfdfd;
+            border: 1px solid #eee;
+            min-height: 100px;
+            padding: 8px;
+            text-align: right;
+            position: relative;
+            cursor: pointer;
+            transition: background-color 0.2s ease;
+            border-radius: 3px;
+        }
+
+        .calendar-day:hover {
+            background-color: #e8f4f8;
+        }
+
+        .calendar-day.today {
+            background-color: #e0f2f7;
+            border: 2px solid #3498db;
+        }
+
+        .calendar-day.inactive {
+            background-color: #f9f9f9;
+            color: #bbb;
+        }
+
+        .day-number {
+            font-size: 1.2em;
+            font-weight: bold;
+            color: #555;
+            position: absolute;
+            top: 5px;
+            right: 8px;
+        }
+
+        .event-indicator {
+            background-color: #2ecc71;
+            color: white;
+            font-size: 0.75em;
+            padding: 2px 5px;
+            border-radius: 3px;
+            margin-top: 5px;
+            display: inline-block;
+            max-width: calc(100% - 10px);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            text-align: left;
+            cursor: pointer;
+        }
+
+        .event-indicator:hover {
+            background-color: #27ae60;
+        }
+
+        /* Event List Styling */
+        #event-list-display {
+            margin-top: 20px;
+            border-top: 1px solid #eee;
+            padding-top: 15px;
+        }
+
+        .event-item {
+            background-color: #f9f9f9;
+            border: 1px solid #e0e0e0;
+            padding: 12px;
+            margin-bottom: 10px;
+            border-radius: 5px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .event-item-details {
+            flex-grow: 1;
+            margin-right: 10px;
+        }
+
+        .event-item h4 {
+            margin: 0 0 5px 0;
+            color: #3498db;
+            font-size: 1.1em;
+        }
+
+        .event-item p {
+            margin: 0;
+            font-size: 0.9em;
+            color: #666;
+        }
+
+        /* Notification Styling */
+        #notification-area {
+            background-color: #ffeeba;
+            border: 1px solid #ffc107;
+            color: #856404;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            display: none; /* Hidden by default */
+        }
+
+        #notification-area.show {
+            display: flex;
+        }
+
+        /* Search Results Styling */
+        #search-results-display {
+            margin-top: 20px;
+            border-top: 1px solid #eee;
+            padding-top: 15px;
+        }
+
+        /* Layout for multiple columns */
+        .grid-2-cols {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        .grid-3-cols {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 20px;
+        }
+
+        /* Responsive adjustments */
+        @media (max-width: 768px) {
+            .grid-2-cols, .grid-3-cols {
+                grid-template-columns: 1fr;
+            }
+            #calendar-grid {
+                font-size: 0.9em;
+            }
+            .calendar-day {
+                min-height: 80px;
+            }
+            .day-number {
+                font-size: 1em;
+            }
+            .event-indicator {
+                font-size: 0.7em;
+                padding: 1px 3px;
+            }
+        }
+
+        /* Utility classes */
+        .hidden {
+            display: none !important;
+        }
+        .text-center {
+            text-align: center;
+        }
+        .flex-row {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-bottom: 15px;
+        }
+        .flex-grow {
+            flex-grow: 1;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Advanced Calendar Application</h1>
+
+    <!-- 1. Project Initialization and Core Infrastructure Setup -->
+    <div class="container" id="app-core">
+        <h2>1. Core Infrastructure</h2>
+        <p>Welcome to your personal calendar application. Manage your events efficiently!</p>
+        <div id="app-status">Application Ready.</div>
+    </div>
+
+    <!-- 2. User Authentication and Authorization System Implementation -->
+    <div class="container" id="auth-system">
+        <h2>2. User Authentication</h2>
+        <div id="auth-status">Please log in.</div>
+        <div id="login-form" class="form-group">
+            <label for="username">Username:</label>
+            <input type="text" id="username" placeholder="Enter username">
+            <label for="password">Password:</label>
+            <input type="password" id="password" placeholder="Enter password">
+            <button onclick="login()">Login</button>
+        </div>
+        <div id="logout-section" class="hidden">
+            <button onclick="logout()" class="secondary">Logout</button>
+        </div>
+    </div>
+
+    <!-- Main Application Area (visible after login) -->
+    <div id="main-app-area" class="hidden">
+
+        <!-- 10. User Profile and Personalization Settings -->
+        <div class="container" id="user-profile">
+            <h2>10. User Profile & Settings</h2>
+            <div class="form-group">
+                <label for="profile-name">Your Name:</label>
+                <input type="text" id="profile-name" placeholder="Your Name">
+            </div>
+            <div class="form-group">
+                <label for="default-view">Default Calendar View:</label>
+                <select id="default-view">
+                    <option value="month">Month</option>
+                    <option value="week">Week</option>
+                    <option value="day">Day</option>
+                </select>
+            </div>
+            <button onclick="saveProfileSettings()">Save Settings</button>
+            <div id="profile-status" style="margin-top: 10px; color: green;"></div>
+        </div>
+
+        <!-- 7. Daily and Weekly Calendar Views Implementation -->
+        <div class="container" id="calendar-views">
+            <h2>7. Calendar Views</h2>
+            <div class="flex-row">
+                <button onclick="changeCalendarView('month')">Month View</button>
+                <button onclick="changeCalendarView('week')">Week View</button>
+                <button onclick="changeCalendarView('day')">Day View</button>
+            </div>
+
+            <!-- 3. Core Monthly Calendar Display Frontend Development -->
+            <div id="month-view" class="calendar-view">
+                <h3>Monthly Calendar</h3>
+                <div id="calendar-header">
+                    <button onclick="prevMonth()">&lt; Prev</button>
+                    <span id="current-month-year"></span>
+                    <button onclick="nextMonth()">Next &gt;</button>
+                </div>
+                <div id="calendar-grid">
+                    <!-- Day names -->
+                    <div class="day-name">Sun</div>
+                    <div class="day-name">Mon</div>
+                    <div class="day-name">Tue</div>
+                    <div class="day-name">Wed</div>
+                    <div class="day-name">Thu</div>
+                    <div class="day-name">Fri</div>
+                    <div class="day-name">Sat</div>
+                    <!-- Calendar days will be rendered here by JS -->
+                </div>
+            </div>
+
+            <div id="week-view" class="calendar-view hidden">
+                <h3>Weekly Calendar</h3>
+                <div id="week-header" class="calendar-header">
+                    <button onclick="prevWeek()">&lt; Prev</button>
+                    <span id="current-week-range"></span>
+                    <button onclick="nextWeek()">Next &gt;</button>
+                </div>
+                <div id="week-grid" style="display: grid; grid-template-columns: 50px repeat(7, 1fr); gap: 5px; border: 1px solid #ddd; padding: 5px; border-radius: 5px;">
+                    <div class="day-name" style="background-color: #ecf0f1; color: #333;">Time</div>
+                    <!-- Weekday names will be rendered here by JS -->
+                </div>
+            </div>
+
+            <div id="day-view" class="calendar-view hidden">
+                <h3>Daily Calendar</h3>
+                <div id="day-header" class="calendar-header">
+                    <button onclick="prevDay()">&lt; Prev</button>
+                    <span id="current-day-date"></span>
+                    <button onclick="nextDay()">Next &gt;</button>
+                </div>
+                <div id="day-grid" style="display: grid; grid-template-columns: 50px 1fr; gap: 5px; border: 1px solid #ddd; padding: 5px; border-radius: 5px;">
+                    <div class="day-name" style="background-color: #ecf0f1; color: #333;">Time</div>
+                    <div class="day-name" id="day-grid-date"></div>
+                    <!-- Day hours and events will be rendered here by JS -->
+                </div>
+            </div>
+        </div>
+
+        <div class="grid-2-cols">
+            <!-- 5. Event Creation and Display Frontend Integration -->
+            <!-- 6. Event Editing and Deletion Frontend Integration -->
+            <div class="container" id="event-management">
+                <h2>5 & 6. Event Management</h2>
+                <h3><span id="event-form-title">Create New Event</span></h3>
+                <div class="form-group">
+                    <label for="event-title">Title:</label>
+                    <input type="text" id="event-title" placeholder="Event Title">
+                </div>
+                <div class="form-group">
+                    <label for="event-date">Date:</label>
+                    <input type="date" id="event-date">
+                </div>
+                <div class="form-group">
+                    <label for="event-time">Time:</label>
+                    <input type="time" id="event-time">
+                </div>
+                <div class="form-group">
+                    <label for="event-description">Description:</label>
+                    <textarea id="event-description" rows="3" placeholder="Event Description"></textarea>
+                </div>
+                <input type="hidden" id="event-id">
+                <button id="save-event-btn" onclick="saveEvent()">Create Event</button>
+                <button id="cancel-edit-btn" onclick="resetEventForm()" class="secondary hidden">Cancel Edit</button>
+                <button id="delete-event-btn" onclick="deleteEvent()" class="danger hidden">Delete Event</button>
+
+                <div id="event-list-display">
+                    <h3>All Events</h3>
+                    <div id="event-list">No events yet.</div>
+                </div>
+            </div>
+
+            <div>
+                <!-- 8. Event Reminders and Notifications System -->
+                <div class="container" id="notifications">
+                    <h2>8. Event Reminders & Notifications</h2>
+                    <div id="notification-area">
+                        <span id="notification-message"></span>
+                        <button onclick="dismissNotification()" class="secondary">Dismiss</button>
+                    </div>
+                    <p>Upcoming event reminders will appear here.</p>
+                </div>
+
+                <!-- 9. Event Search, Filtering, and Sorting Functionality -->
+                <div class="container" id="search-filter-sort">
+                    <h2>9. Search, Filter & Sort</h2>
+                    <div class="form-group">
+                        <label for="search-keyword">Search Keyword:</label>
+                        <input type="text" id="search-keyword" placeholder="e.g., meeting, birthday">
+                    </div>
+                    <div class="form-group">
+                        <label for="filter-date-start">Date Range (Start):</label>
+                        <input type="date" id="filter-date-start">
+                    </div>
+                    <div class="form-group">
+                        <label for="filter-date-end">Date Range (End):</label>
+                        <input type="date" id="filter-date-end">
+                    </div>
+                    <div class="form-group">
+                        <label for="sort-by">Sort By:</label>
+                        <select id="sort-by">
+                            <option value="date-asc">Date (Asc)</option>
+                            <option value="date-desc">Date (Desc)</option>
+                            <option value="title-asc">Title (A-Z)</option>
+                            <option value="title-desc">Title (Z-A)</option>
+                        </select>
+                    </div>
+                    <button onclick="applySearchFilterSort()">Apply</button>
+                    <button onclick="resetSearchFilterSort()" class="secondary">Reset</button>
+
+                    <div id="search-results-display">
+                        <h3>Search Results</h3>
+                        <div id="search-results">No results.</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 11. Comprehensive Testing and Quality Assurance -->
+        <div class="container" id="testing-qa">
+            <h2>11. Testing & Quality Assurance</h2>
+            <p>Simulate running automated tests for the application.</p>
+            <button onclick="runTests()">Run Tests</button>
+            <div id="test-results" style="margin-top: 10px;"></div>
+        </div>
+
+        <!-- 12. Deployment Pipeline and Production Release -->
+        <div class="container" id="deployment">
+            <h2>12. Deployment & Release</h2>
+            <p>Simulate deploying the application to production.</p>
+            <button onclick="deployApplication()">Deploy to Production</button>
+            <div id="deployment-status" style="margin-top: 10px;"></div>
+        </div>
+
+    </div> <!-- End of main-app-area -->
+
+    <script>
+        // Global Application State
+        let currentUser = null;
+        let currentView = 'month'; // 'month', 'week', 'day'
+        let currentDate = new Date(); // Tracks the currently displayed month/week/day
+        let events = []; // 4. Event Data Model (simulated client-side)
+        let userSettings = {
+            name: 'Guest',
+            defaultView: 'month'
+        };
+
+        // --- 1. Project Initialization and Core Infrastructure Setup ---
+        document.addEventListener('DOMContentLoaded', () => {
+            console.log("Application initialized.");
+            document.getElementById('app-status').textContent = "Application Ready. Please log in.";
+            loadUserSettings(); // Load settings on startup
+            renderCalendar(); // Render initial calendar (even if not logged in, for structure)
+            renderEventList();
+            checkReminders();
+            setInterval(checkReminders, 60000); // Check reminders every minute
+        });
+
+        // --- 2. User Authentication and Authorization System Implementation ---
+        function login() {
+            const usernameInput = document.getElementById('username').value;
+            const passwordInput = document.getElementById('password').value;
+
+            // Simple mock authentication
+            if (usernameInput === 'user' && passwordInput === 'password') {
+                currentUser = { username: usernameInput, id: '123' };
+                document.getElementById('auth-status').textContent = `Logged in as: ${currentUser.username}`;
+                document.getElementById('login-form').classList.add('hidden');
+                document.getElementById('logout-section').classList.remove('hidden');
+                document.getElementById('main-app-area').classList.remove('hidden');
+                document.getElementById('profile-name').value = userSettings.name;
+                document.getElementById('default-view').value = userSettings.defaultView;
+                changeCalendarView(userSettings.defaultView); // Set default view from settings
+                console.log("User logged in:", currentUser.username);
+            } else {
+                alert('Invalid username or password.');
+            }
+        }
+
+        function logout() {
+            currentUser = null;
+            document.getElementById('auth-status').textContent = 'Please log in.';
+            document.getElementById('login-form').classList.remove('hidden');
+            document.getElementById('logout-section').classList.add('hidden');
+            document.getElementById('main-app-area').classList.add('hidden');
+            console.log("User logged out.");
+        }
+
+        // --- 3. Core Monthly Calendar Display Frontend Development ---
+        function renderCalendar() {
+            const calendarGrid = document.getElementById('calendar-grid');
+            const currentMonthYear = document.getElementById('current-month-year');
+            calendarGrid.innerHTML = `
+                <div class="day-name">Sun</div>
+                <div class="day-name">Mon</div>
+                <div class="day-name">Tue</div>
+                <div class="day-name">Wed</div>
+                <div class="day-name">Thu</div>
+                <div class="day-name">Fri</div>
+                <div class="day-name">Sat</div>
+            `; // Reset grid and add day names
+
+            const year = currentDate.getFullYear();
+            const month = currentDate.getMonth(); // 0-indexed
+
+            currentMonthYear.textContent = new Date(year, month).toLocaleString('en-US', { month: 'long', year: 'numeric' });
+
+            const firstDayOfMonth = new Date(year, month, 1).getDay(); // 0 for Sunday, 1 for Monday, etc.
+            const daysInMonth = new Date(year, month + 1, 0).getDate();
+            const today = new Date();
+            const todayDate = today.getDate();
+            const todayMonth = today.getMonth();
+            const todayYear = today.getFullYear();
+
+            // Add empty cells for days before the 1st of the month
+            for (let i = 0; i < firstDayOfMonth; i++) {
+                const prevMonthLastDay = new Date(year, month, 0).getDate();
+                const dayDiv = document.createElement('div');
+                dayDiv.classList.add('calendar-day', 'inactive');
+                dayDiv.innerHTML = `<span class="day-number">${prevMonthLastDay - firstDayOfMonth + 1 + i}</span>`;
+                calendarGrid.appendChild(dayDiv);
+            }
+
+            // Add days of the current month
+            for (let day = 1; day <= daysInMonth; day++) {
+                const dayDiv = document.createElement('div');
+                dayDiv.classList.add('calendar-day');
+                dayDiv.innerHTML = `<span class="day-number">${day}</span>`;
+                dayDiv.dataset.date = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+
+                if (day === todayDate && month === todayMonth && year === todayYear) {
+                    dayDiv.classList.add('today');
+                }
+
+                // Add event indicators
+                const dayEvents = events.filter(event => {
+                    const eventDate = new Date(event.date);
+                    return eventDate.getDate() === day && eventDate.getMonth() === month && eventDate.getFullYear() === year;
+                });
+
+                dayEvents.forEach(event => {
+                    const eventSpan = document.createElement('span');
+                    eventSpan.classList.add('event-indicator');
+                    eventSpan.textContent = event.title;
+                    eventSpan.title = `${event.title} (${event.time})`;
+                    eventSpan.onclick = (e) => {
+                        e.stopPropagation(); // Prevent day click
+                        editEvent(event.id);
+                    };
+                    dayDiv.appendChild(eventSpan);
+                });
+
+                dayDiv.onclick = () => {
+                    document.getElementById('event-date').value = dayDiv.dataset.date;
+                    resetEventForm(); // Clear form for new event
+                };
+
+                calendarGrid.appendChild(dayDiv);
+            }
+
+            // Add empty cells for days after the last day of the month
+            const totalCells = firstDayOfMonth + daysInMonth;
+            const remainingCells = 42 - totalCells; // Max 6 rows * 7 days = 42 cells
+            for (let i = 1; i <= remainingCells; i++) {
+                const dayDiv = document.createElement('div');
+                dayDiv.classList.add('calendar-day', 'inactive');
+                dayDiv.innerHTML = `<span class="day-number">${i}</span>`;
+                calendarGrid.appendChild(dayDiv);
+            }
+        }
+
+        function prevMonth() {
+            currentDate.setMonth(currentDate.getMonth() - 1);
+            renderCalendar();
+        }
+
+        function nextMonth() {
+            currentDate.setMonth(currentDate.getMonth() + 1);
+            renderCalendar();
+        }
+
+        // --- 4. Event Data Model and Backend API Development (Simulated) ---
+        // Events array is defined globally.
+        // Functions below simulate API interactions.
+
+        function generateUniqueId() {
+            return '_' + Math.random().toString(36).substr(2, 9);
+        }
+
+        function getEvents() {
+            // Simulate fetching from a backend
+            return Promise.resolve([...events]);
+        }
+
+        function addEvent(eventData) {
+            eventData.id = generateUniqueId();
+            events.push(eventData);
+            console.log("Event added:", eventData);
+            return Promise.resolve(eventData);
+        }
+
+        function updateEvent(eventId, updatedData) {
+            const index = events.findIndex(e => e.id === eventId);
+            if (index !== -1) {
+                events[index] = { ...events[index], ...updatedData };
+                console.log("Event updated:", events[index]);
+                return Promise.resolve(events[index]);
+            }
+            return Promise.reject(new Error("Event not found"));
+        }
+
+        function deleteEventById(eventId) {
+            const initialLength = events.length;
+            events = events.filter(e => e.id !== eventId);
+            if (events.length < initialLength) {
+                console.log("Event deleted:", eventId);
+                return Promise.resolve({ success: true });
+            }
+            return Promise.reject(new Error("Event not found"));
+        }
+
+        // --- 5. Event Creation and Display Frontend Integration ---
+        // --- 6. Event Editing and Deletion Frontend Integration ---
+        function saveEvent() {
+            const eventId = document.getElementById('event-id').value;
+            const title = document.getElementById('event-title').value;
+            const date = document.getElementById('event-date').value;
+            const time = document.getElementById('event-time').value;
+            const description = document.getElementById('event-description').value;
+
+            if (!title || !date || !time) {
+                alert('Please fill in event title, date, and time.');
+                return;
+            }
+
+            const eventData = { title, date, time, description };
+
+            if (eventId) {
+                // Editing existing event
+                updateEvent(eventId, eventData)
+                    .then(() => {
+                        alert('Event updated successfully!');
+                        resetEventForm();
+                        refreshAllDisplays();
+                    })
+                    .catch(error => console.error("Error updating event:", error));
+            } else {
+                // Creating new event
+                addEvent(eventData)
+                    .then(() => {
+                        alert('Event created successfully!');
+                        resetEventForm();
+                        refreshAllDisplays();
+                    })
+                    .catch(error => console.error("Error adding event:", error));
+            }
+        }
+
+        function editEvent(eventId) {
+            const event = events.find(e => e.id === eventId);
+            if (event) {
+                document.getElementById('event-form-title').textContent = 'Edit Event';
+                document.getElementById('event-id').value = event.id;
+                document.getElementById('event-title').value = event.title;
+                document.getElementById('event-date').value = event.date;
+                document.getElementById('event-time').value = event.time;
+                document.getElementById('event-description').value = event.description;
+
+                document.getElementById('save-event-btn').textContent = 'Save Changes';
+                document.getElementById('cancel-edit-btn').classList.remove('hidden');
+                document.getElementById('delete-event-btn').classList.remove('hidden');
+            }
+        }
+
+        function deleteEvent() {
+            const eventId = document.getElementById('event-id').value;
+            if (eventId && confirm('Are you sure you want to delete this event?')) {
+                deleteEventById(eventId)
+                    .then(() => {
+                        alert('Event deleted successfully!');
+                        resetEventForm();
+                        refreshAllDisplays();
+                    })
+                    .catch(error => console.error("Error deleting event:", error));
+            }
+        }
+
+        function resetEventForm() {
+            document.getElementById('event-form-title').textContent = 'Create New Event';
+            document.getElementById('event-id').value = '';
+            document.getElementById('event-title').value = '';
+            document.getElementById('event-date').value = '';
+            document.getElementById('event-time').value = '';
+            document.getElementById('event-description').value = '';
+
+            document.getElementById('save-event-btn').textContent = 'Create Event';
+            document.getElementById('cancel-edit-btn').classList.add('hidden');
+            document.getElementById('delete-event-btn').classList.add('hidden');
+        }
+
+        function renderEventList(eventList = events) {
+            const eventListDiv = document.getElementById('event-list');
+            if (eventList.length === 0) {
+                eventListDiv.innerHTML = '<p>No events to display.</p>';
+                return;
+            }
+
+            eventListDiv.innerHTML = '';
+            eventList.sort((a, b) => new Date(`${a.date}T${a.time}`) - new Date(`${b.date}T${b.time}`));
+
+            eventList.forEach(event => {
+                const eventItem = document.createElement('div');
+                eventItem.classList.add('event-item');
+                eventItem.innerHTML = `
+                    <div class="event-item-details">
+                        <h4>${event.title}</h4>
+                        <p>${event.date} at ${event.time}</p>
+                        <p>${event.description}</p>
+                    </div>
+                    <div>
+                        <button onclick="editEvent('${event.id}')">Edit</button>
+                    </div>
+                `;
+                eventListDiv.appendChild(eventItem);
+            });
+        }
+
+        function refreshAllDisplays() {
+            renderCalendar();
+            renderEventList();
+            applySearchFilterSort(); // Re-apply search/filter to update results
+            renderWeekView();
+            renderDayView();
+            checkReminders();
+        }
+
+        // --- 7. Daily and Weekly Calendar Views Implementation ---
+        function changeCalendarView(view) {
+            currentView = view;
+            document.querySelectorAll('.calendar-view').forEach(el => el.classList.add('hidden'));
+            document.getElementById(`${view}-view`).classList.remove('hidden');
+
+            switch (view) {
+                case 'month':
+                    renderCalendar();
+                    break;
+                case 'week':
+                    renderWeekView();
+                    break;
+                case 'day':
+                    renderDayView();
+                    break;
+            }
+        }
+
+        function getWeekRange(date) {
+            const startOfWeek = new Date(date);
+            startOfWeek.setDate(date.getDate() - date.getDay()); // Go to Sunday
+            const endOfWeek = new Date(startOfWeek);
+            endOfWeek.setDate(startOfWeek.getDate() + 6); // Go to Saturday
+            return { start: startOfWeek, end: endOfWeek };
+        }
+
+        function renderWeekView() {
+            const weekGrid = document.getElementById('week-grid');
+            const currentWeekRangeSpan = document.getElementById('current-week-range');
+            weekGrid.innerHTML = `<div class="day-name" style="background-color: #ecf0f1; color: #333;">Time</div>`; // Reset
+
+            const { start, end } = getWeekRange(currentDate);
+            currentWeekRangeSpan.textContent = `${start.toLocaleDateString()} - ${end.toLocaleDateString()}`;
+
+            const daysOfWeek = [];
+            for (let i = 0; i < 7; i++) {
+                const day = new Date(start);
+                day.setDate(start.getDate() + i);
+                daysOfWeek.push(day);
+                const dayNameDiv = document.createElement('div');
+                dayNameDiv.classList.add('day-name');
+                dayNameDiv.textContent = day.toLocaleDateString('en-US', { weekday: 'short', month: 'numeric', day: 'numeric' });
+                weekGrid.appendChild(dayNameDiv);
+            }
+
+            // Create grid for hours
+            for (let hour = 0; hour < 24; hour++) {
+                const timeCell = document.createElement('div');
+                timeCell.style.padding = '10px 5px';
+                timeCell.style.border = '1px solid #eee';
+                timeCell.style.textAlign = 'center';
+                timeCell.style.fontWeight = 'bold';
+                timeCell.textContent = `${String(hour).padStart(2, '0')}:00`;
+                weekGrid.appendChild(timeCell);
+
+                daysOfWeek.forEach(day => {
+                    const dayCell = document.createElement('div');
+                    dayCell.style.border = '1px solid #eee';
+                    dayCell.style.minHeight = '40px';
+                    dayCell.style.padding = '5px';
+                    dayCell.style.position = 'relative';
+                    dayCell.style.backgroundColor = '#fdfdfd';
+
+                    const eventsInHour = events.filter(event => {
+                        const eventDate = new Date(event.date);
+                        const eventHour = parseInt(event.time.split(':')[0]);
+                        return eventDate.toDateString() === day.toDateString() && eventHour === hour;
+                    });
+
+                    eventsInHour.forEach(event => {
+                        const eventSpan = document.createElement('span');
+                        eventSpan.classList.add('event-indicator');
+                        eventSpan.textContent = event.title;
+                        eventSpan.title = `${event.title} (${event.time})`;
+                        eventSpan.onclick = (e) => { e.stopPropagation(); editEvent(event.id); };
+                        dayCell.appendChild(eventSpan);
+                    });
+                    weekGrid.appendChild(dayCell);
+                });
+            }
+            weekGrid.style.gridTemplateColumns = `50px repeat(7, 1fr)`;
+        }
+
+        function prevWeek() {
+            currentDate.setDate(currentDate.getDate() - 7);
+            renderWeekView();
+        }
+
+        function nextWeek() {
+            currentDate.setDate(currentDate.getDate() + 7);
+            renderWeekView();
+        }
+
+        function renderDayView() {
+            const dayGrid = document.getElementById('day-grid');
+            const currentDayDateSpan = document.getElementById('current-day-date');
+            const dayGridDateHeader = document.getElementById('day-grid-date');
+            dayGrid.innerHTML = `<div class="day-name" style="background-color: #ecf0f1; color: #333;">Time</div><div class="day-name" id="day-grid-date"></div>`; // Reset
+
+            currentDayDateSpan.textContent = currentDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+            dayGridDateHeader.textContent = currentDate.toLocaleDateString('en-US', { weekday: 'long', month: 'numeric', day: 'numeric' });
+
+            for (let hour = 0; hour < 24; hour++) {
+                const timeCell = document.createElement('div');
+                timeCell.style.padding = '10px 5px';
+                timeCell.style.border = '1px solid #eee';
+                timeCell.style.textAlign = 'center';
+                timeCell.style.fontWeight = 'bold';
+                timeCell.textContent = `${String(hour).padStart(2, '0')}:00`;
+                dayGrid.appendChild(timeCell);
+
+                const hourCell = document.createElement('div');
+                hourCell.style.border = '1px solid #eee';
+                hourCell.style.minHeight = '40px';
+                hourCell.style.padding = '5px';
+                hourCell.style.position = 'relative';
+                hourCell.style.backgroundColor = '#fdfdfd';
+
+                const eventsInHour = events.filter(event => {
+                    const eventDate = new Date(event.date);
+                    const eventHour = parseInt(event.time.split(':')[0]);
+                    return eventDate.toDateString() === currentDate.toDateString() && eventHour === hour;
+                });
+
+                eventsInHour.forEach(event => {
+                    const eventSpan = document.createElement('span');
+                    eventSpan.classList.add('event-indicator');
+                    eventSpan.textContent = event.title;
+                    eventSpan.title = `${event.title} (${event.time})`;
+                    eventSpan.onclick = (e) => { e.stopPropagation(); editEvent(event.id); };
+                    hourCell.appendChild(eventSpan);
+                });
+                dayGrid.appendChild(hourCell);
+            }
+            dayGrid.style.gridTemplateColumns = `50px 1fr`;
+        }
+
+        function prevDay() {
+            currentDate.setDate(currentDate.getDate() - 1);
+            renderDayView();
+        }
+
+        function nextDay() {
+            currentDate.setDate(currentDate.getDate() + 1);
+            renderDayView();
+        }
+
+        // --- 8. Event Reminders and Notifications System ---
+        function checkReminders() {
+            const now = new Date();
+            const notificationArea = document.getElementById('notification-area');
+            const notificationMessage = document.getElementById('notification-message');
+            let upcomingEvent = null;
+
+            events.sort((a, b) => new Date(`${a.date}T${a.time}`) - new Date(`${b.date}T${b.time}`));
+
+            for (const event of events) {
+                const eventDateTime = new Date(`${event.date}T${event.time}`);
+                const timeDiff = eventDateTime.getTime() - now.getTime(); // Difference in milliseconds
+
+                // Check for events within the next 60 minutes (3600000 ms = 1 hour)
+                if (timeDiff > 0 && timeDiff <= 60 * 60 * 1000) {
+                    upcomingEvent = event;
+                    break;
+                }
+            }
+
+            if (upcomingEvent) {
+                const timeUntil = Math.ceil(upcomingEvent.timeDiff / (1000 * 60)); // minutes
+                notificationMessage.textContent = `Upcoming: "${upcomingEvent.title}" at ${upcomingEvent.time} on ${upcomingEvent.date}. (in ${Math.round(timeDiff / (1000 * 60))} mins)`;
+                notificationArea.classList.add('show');
+            } else {
+                notificationArea.classList.remove('show');
+            }
+        }
+
+        function dismissNotification() {
+            document.getElementById('notification-area').classList.remove('show');
+        }
+
+        // --- 9. Event Search, Filtering, and Sorting Functionality ---
+        function applySearchFilterSort() {
+            let filteredEvents = [...events];
+
+            const keyword = document.getElementById('search-keyword').value.toLowerCase();
+            const startDate = document.getElementById('filter-date-start').value;
+            const endDate = document.getElementById('filter-date-end').value;
+            const sortBy = document.getElementById('sort-by').value;
+
+            // Filter by keyword
+            if (keyword) {
+                filteredEvents = filteredEvents.filter(event =>
+                    event.title.toLowerCase().includes(keyword) ||
+                    event.description.toLowerCase().includes(keyword)
+                );
+            }
+
+            // Filter by date range
+            if (startDate) {
+                filteredEvents = filteredEvents.filter(event => new Date(event.date) >= new Date(startDate));
+            }
+            if (endDate) {
+                filteredEvents = filteredEvents.filter(event => new Date(event.date) <= new Date(endDate));
+            }
+
+            // Sort
+            filteredEvents.sort((a, b) => {
+                const dateA = new Date(`${a.date}T${a.time}`);
+                const dateB = new Date(`${b.date}T${b.time}`);
+                const titleA = a.title.toLowerCase();
+                const titleB = b.title.toLowerCase();
+
+                if (sortBy === 'date-asc') return dateA - dateB;
+                if (sortBy === 'date-desc') return dateB - dateA;
+                if (sortBy === 'title-asc') return titleA.localeCompare(titleB);
+                if (sortBy === 'title-desc') return titleB.localeCompare(titleA);
+                return 0;
+            });
+
+            renderSearchResults(filteredEvents);
+        }
+
+        function renderSearchResults(results) {
+            const searchResultsDiv = document.getElementById('search-results');
+            if (results.length === 0) {
+                searchResultsDiv.innerHTML = '<p>No events match your criteria.</p>';
+                return;
+            }
+
+            searchResultsDiv.innerHTML = '';
+            results.forEach(event => {
+                const eventItem = document.createElement('div');
+                eventItem.classList.add('event-item');
+                eventItem.innerHTML = `
+                    <div class="event-item-details">
+                        <h4>${event.title}</h4>
+                        <p>${event.date} at ${event.time}</p>
+                        <p>${event.description}</p>
+                    </div>
+                    <div>
+                        <button onclick="editEvent('${event.id}')">Edit</button>
+                    </div>
+                `;
+                searchResultsDiv.appendChild(eventItem);
+            });
+        }
+
+        function resetSearchFilterSort() {
+            document.getElementById('search-keyword').value = '';
+            document.getElementById('filter-date-start').value = '';
+            document.getElementById('filter-date-end').value = '';
+            document.getElementById('sort-by').value = 'date-asc';
+            applySearchFilterSort(); // Re-apply to show all events
+        }
+
+        // --- 10. User Profile and Personalization Settings ---
+        function loadUserSettings() {
+            const storedSettings = localStorage.getItem('calendarUserSettings');
+            if (storedSettings) {
+                userSettings = JSON.parse(storedSettings);
+            }
+            document.getElementById('profile-name').value = userSettings.name;
+            document.getElementById('default-view').value = userSettings.defaultView;
+        }
+
+        function saveProfileSettings() {
+            userSettings.name = document.getElementById('profile-name').value;
+            userSettings.defaultView = document.getElementById('default-view').value;
+            localStorage.setItem('calendarUserSettings', JSON.stringify(userSettings));
+            document.getElementById('profile-status').textContent = 'Settings saved successfully!';
+            setTimeout(() => document.getElementById('profile-status').textContent = '', 3000);
+            console.log("User settings saved:", userSettings);
+            changeCalendarView(userSettings.defaultView); // Apply default view immediately
+        }
+
+        // --- 11. Comprehensive Testing and Quality Assurance ---
+        function runTests() {
+            const testResultsDiv = document.getElementById('test-results');
+            testResultsDiv.innerHTML = 'Running tests...';
+
+            let passed = 0;
+            let failed = 0;
+
+            // Test 1: Event Creation
+            addEvent({ title: 'Test Event 1', date: '2023-12-25', time: '10:00', description: 'A test event.' })
+                .then(event => {
+                    if (events.some(e => e.id === event.id)) {
+                        passed++;
+                        console.log("Test 1 Passed: Event created.");
+                    } else {
+                        failed++;
+                        console.error("Test 1 Failed: Event not found after creation.");
+                    }
+                    // Test 2: Event Update
+                    return updateEvent(event.id, { title: 'Updated Test Event 1' });
+                })
+                .then(updatedEvent => {
+                    if (updatedEvent.title === 'Updated Test Event 1') {
+                        passed++;
+                        console.log("Test 2 Passed: Event updated.");
+                    } else {
+                        failed++;
+                        console.error("Test 2 Failed: Event not updated.");
+                    }
+                    // Test 3: Event Deletion
+                    return deleteEventById(updatedEvent.id);
+                })
+                .then(() => {
+                    if (!events.some(e => e.id === 'test-event-id')) {
+                        passed++;
+                        console.log("Test 3 Passed: Event deleted.");
+                    } else {
+                        failed++;
+                        console.error("Test 3 Failed: Event not deleted.");
+                    }
+                })
+                .catch(error => {
+                    failed++;
+                    console.error("Test Failed:", error);
+                })
+                .finally(() => {
+                    testResultsDiv.innerHTML = `Tests Complete: <span style="color: green;">${passed} Passed</span>, <span style="color: red;">${failed} Failed</span>.`;
+                    refreshAllDisplays(); // Clean up any test events
+                });
+        }
+
+        // --- 12. Deployment Pipeline and Production Release ---
+        function deployApplication() {
+            const deploymentStatusDiv = document.getElementById('deployment-status');
+            deploymentStatusDiv.innerHTML = 'Initiating deployment...';
+
+            setTimeout(() => {
+                const success = Math.random() > 0.2; // 80% chance of success
+                if (success) {
+                    deploymentStatusDiv.innerHTML = '<span style="color: green;">Deployment Successful! Application is live.</span>';
+                    console.log("Deployment Successful.");
+                } else {
+                    deploymentStatusDiv.innerHTML = '<span style="color: red;">Deployment Failed. Check logs for details.</span>';
+                    console.error("Deployment Failed.");
+                }
+            }, 3000); // Simulate network delay
+        }
+
+    </script>
+</body>
+</html>

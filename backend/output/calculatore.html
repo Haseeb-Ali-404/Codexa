@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Inline Calculator</title>
+    <style>
+        /*
+         * Step 2: Design the user interface layout (buttons, display area, overall look).
+         * Step 6: Develop the user interface components (buttons, display).
+         * Step 14: Refine UI/UX based on testing and feedback.
+         * This inline CSS provides a basic, functional, and reasonably styled UI.
+         */
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background-color: #f0f2f5;
+            margin: 0;
+            color: #333;
+        }
+
+        #calculator {
+            border: 1px solid #ccc;
+            border-radius: 10px;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+            width: 320px;
+            background-color: #fff;
+            padding: 20px;
+            display: grid;
+            grid-template-rows: auto 1fr;
+            gap: 15px;
+        }
+
+        .display {
+            background-color: #222;
+            color: #0f0; /* Retro green display */
+            font-size: 2.8em;
+            padding: 15px;
+            border-radius: 8px;
+            text-align: right;
+            overflow: hidden;
+            white-space: nowrap;
+            text-overflow: ellipsis;
+            min-height: 60px;
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.3);
+        }
+
+        .buttons {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 10px;
+        }
+
+        .button {
+            background-color: #e0e0e0;
+            border: none;
+            border-radius: 8px;
+            padding: 20px;
+            font-size: 1.5em;
+            cursor: pointer;
+            transition: background-color 0.2s, transform 0.1s;
+            box-shadow: 0 3px 5px rgba(0, 0, 0, 0.1);
+            user-select: none; /* Prevent text selection on button press */
+        }
+
+        .button:hover {
+            background-color: #d0d0d0;
+            transform: translateY(-1px);
+        }
+
+        .button:active {
+            background-color: #c0c0c0;
+            transform: translateY(0);
+            box-shadow: 0 2px 3px rgba(0, 0, 0, 0.1);
+        }
+
+        .button.operator {
+            background-color: #ff9500;
+            color: white;
+        }
+
+        .button.operator:hover {
+            background-color: #e08500;
+        }
+
+        .button.equals {
+            background-color: #4CAF50;
+            color: white;
+            grid-column: span 2; /* Make equals button span two columns */
+        }
+
+        .button.equals:hover {
+            background-color: #45a049;
+        }
+
+        .button.clear {
+            background-color: #f44336;
+            color: white;
+        }
+
+        .button.clear:hover {
+            background-color: #d32f2f;
+        }
+
+        .button.zero {
+            grid-column: span 2;
+        }
+    </style>
+</head>
+<body>
+    <!--
+     * Step 2: Design the user interface layout (buttons, display area, overall look).
+     * Step 6: Develop the user interface components (buttons, display).
+     -->
+    <div id="calculator">
+        <div id="display" class="display">0</div>
+        <div class="buttons">
+            <button class="button clear" data-action="clear">C</button>
+            <button class="button clear" data-action="clear-entry">CE</button>
+            <button class="button operator" data-action="divide">/</button>
+            <button class="button operator" data-action="multiply">*</button>
+
+            <button class="button number" data-value="7">7</button>
+            <button class="button number" data-value="8">8</button>
+            <button class="button number" data-value="9">9</button>
+            <button class="button operator" data-action="subtract">-</button>
+
+            <button class="button number" data-value="4">4</button>
+            <button class="button number" data-value="5">5</button>
+            <button class="button number" data-value="6">6</button>
+            <button class="button operator" data-action="add">+</button>
+
+            <button class="button number" data-value="1">1</button>
+            <button class="button number" data-value="2">2</button>
+            <button class="button number" data-value="3">3</button>
+            <button class="button equals" data-action="equals">=</button>
+
+            <button class="button number zero" data-value="0">0</button>
+            <button class="button decimal" data-action="decimal">.</button>
+        </div>
+    </div>
+
+    <script>
+        /*
+         * Step 3: Choose the technology stack (e.g., web, desktop, mobile framework).
+         *         Chosen: Web (HTML, CSS, JavaScript) - inherent in the request.
+         * Step 4: Set up the project repository and version control.
+         *         (This step is external to the HTML file itself, but crucial for development.)
+         *         A Git repository would typically be used for version control.
+         * Step 16: Create user documentation and a developer README.
+         *         (Comments within this script serve as basic developer documentation.
+         *         Full user documentation and a README would be separate files.)
+         */
+
+        // --- Calculator State Variables ---
+        let currentInput = '0';
+        let previousInput = '';
+        let operator = null;
+        let waitingForNewNumber = false; // True after an operator or equals is pressed
+        let resultDisplayed = false; // True if the display shows a result from equals
+
+        const display = document.getElementById('display');
+        const buttons = document.querySelector('.buttons');
+
+        // --- Step 8: Develop the display update logic to show current input and results ---
+        function updateDisplay() {
+            // Limit display length to prevent overflow, but allow scrolling for very long numbers
+            const maxDisplayLength = 12; // Example limit
+            if (currentInput.length > maxDisplayLength && !currentInput.includes('Error')) {
+                display.style.fontSize = '2em'; // Reduce font size for longer numbers
+            } else {
+                display.style.fontSize = '2.8em';
+            }
+            display.textContent = currentInput;
+        }
+
+        // --- Step 5: Implement the core arithmetic logic functions (add, subtract, multiply, divide) as pure functions ---
+        function add(a, b) {
+            return parseFloat(a) + parseFloat(b);
+        }
+
+        function subtract(a, b) {
+            return parseFloat(a) - parseFloat(b);
+        }
+
+        function multiply(a, b) {
+            return parseFloat(a) * parseFloat(b);
+        }
+
+        function divide(a, b) {
+            if (parseFloat(b) === 0) {
+                // Step 11: Implement basic error handling (e.g., division by zero)
+                throw new Error("Cannot divide by zero");
+            }
+            return parseFloat(a) / parseFloat(b);
+        }
+
+        // --- Core Calculation Logic ---
+        function calculate() {
+            const prev = parseFloat(previousInput);
+            const current = parseFloat(currentInput);
+
+            if (isNaN(prev) || isNaN(current) || !operator) {
+                // Step 11: Basic error handling for invalid input sequences
+                return NaN; // Or throw an error for more specific handling
+            }
+
+            try {
+                let result;
+                switch (operator) {
+                    case '+': result = add(prev, current); break;
+                    case '-': result = subtract(prev, current); break;
+                    case '*': result = multiply(prev, current); break;
+                    case '/': result = divide(prev, current); break;
+                    default: return NaN;
+                }
+                // Handle floating point precision issues for display
+                return parseFloat(result.toFixed(10));
+            } catch (error) {
+                return error.message; // Return error message for display
+            }
+        }
+
+        // --- Step 7: Implement input handling for number and operator buttons ---
+        // --- Step 1: Define core calculator features (e.g., add, subtract, multiply, divide, clear, equals, decimal). ---
+        // These are implemented via the event handlers below.
+
+        buttons.addEventListener('click', (event) => {
+            const target = event.target;
+            if (!target.matches('button')) return; // Ensure it's a button
+
+            const value = target.dataset.value;
+            const action = target.dataset.action;
+
+            if (value) { // Number button
+                if (currentInput === 'Error') { // If error is displayed, start fresh
+                    currentInput = value;
+                } else if (waitingForNewNumber || resultDisplayed || currentInput === '0') {
+                    currentInput = value;
+                    waitingForNewNumber = false;
+                    resultDisplayed = false;
+                } else {
+                    currentInput += value;
+                }
+            } else if (action) { // Action button (operator, clear, equals, decimal)
+                switch (action) {
+                    case 'decimal': // Step 1: Decimal feature
+                        if (currentInput === 'Error') {
+                            currentInput = '0.';
+                            waitingForNewNumber = false;
+                            resultDisplayed = false;
+                        } else if (waitingForNewNumber || resultDisplayed) {
+                            currentInput = '0.';
+                            waitingForNewNumber = false;
+                            resultDisplayed = false;
+                        } else if (!currentInput.includes('.')) {
+                            currentInput += '.';
+                        }
+                        break;
+                    case 'add':
+                    case 'subtract':
+                    case 'multiply':
+                    case 'divide': // Step 1: Operator features
+                        if (currentInput === 'Error') { // Cannot operate on an error state
+                            // Do nothing or reset
+                            break;
+                        }
+                        if (previousInput && operator && !waitingForNewNumber) {
+                            // If there's a pending operation and a new number, calculate intermediate result
+                            const result = calculate();
+                            if (typeof result === 'string' && result.includes('Error')) {
+                                currentInput = result;
+                                previousInput = '';
+                                operator = null;
+                                waitingForNewNumber = true;
+                                resultDisplayed = true;
+                            } else {
+                                currentInput = String(result);
+                                previousInput = currentInput;
+                                operator = action === 'add' ? '+' : action === 'subtract' ? '-' : action === 'multiply' ? '*' : '/';
+                                waitingForNewNumber = true;
+                                resultDisplayed = false;
+                            }
+                        } else {
+                            previousInput = currentInput;
+                            operator = action === 'add' ? '+' : action === 'subtract' ? '-' : action === 'multiply' ? '*' : '/';
+                            waitingForNewNumber = true;
+                            resultDisplayed = false;
+                        }
+                        break;
+                    case 'equals': // Step 9: Implement the "equals" logic
+                        if (currentInput === 'Error') {
+                            break;
+                        }
+                        if (previousInput && operator && currentInput) {
+                            const result = calculate();
+                            if (typeof result === 'string' && result.includes('Error')) {
+                                currentInput = result;
+                            } else {
+                                currentInput = String(result);
+                            }
+                            previousInput = '';
+                            operator = null;
+                            waitingForNewNumber = true; // Ready for a new calculation or to continue with result
+                            resultDisplayed = true;
+                        }
+                        break;
+                    case 'clear': // Step 10: Add "clear" functionality (C)
+                        currentInput = '0';
+                        previousInput = '';
+                        operator = null;
+                        waitingForNewNumber = false;
+                        resultDisplayed = false;
+                        break;
+                    case 'clear-entry': // Step 10: Add "clear entry" functionality (CE)
+                        currentInput = '0';
+                        resultDisplayed = false; // If CE is pressed, it's not a final result anymore
+                        break;
+                }
+            }
+            updateDisplay();
+        });
+
+        // Initialize display
+        updateDisplay();
+
+
+        // --- Step 12: Write unit tests for the core arithmetic logic. ---
+        // These are simple inline tests. In a real project, a dedicated test runner (e.g., Jest, Mocha)
+        // would be used, and tests would reside in separate files.
+        function runUnitTests() {
+            console.log("--- Running Unit Tests for Arithmetic Logic ---");
+
+            function assert(condition, message) {
+                if (condition) {
+                    console.log(`✅ ${message}`);
+                } else {
+                    console.error(`❌ ${message}`);
+                }
+            }
+
+            // Test Add
+            assert(add(1, 2) === 3, "add(1, 2) should be 3");
+            assert(add(-1, 2) === 1, "add(-1, 2) should be 1");
+            assert(add(0.1, 0.2).toFixed(10) === "0.3000000000", "add(0.1, 0.2) should be 0.3"); // Floating point precision
+
+            // Test Subtract
+            assert(subtract(5, 3) === 2, "subtract(5, 3) should be 2");
+            assert(subtract(3, 5) === -2, "subtract(3, 5) should be -2");
+            assert(subtract(10, 0.5) === 9.5, "subtract(10, 0.5) should be 9.5");
+
+            // Test Multiply
+            assert(multiply(2, 3) === 6, "multiply(2, 3) should be 6");
+            assert(multiply(-2, 3) === -6, "multiply(-2, 3) should be -6");
+            assert(multiply(2.5, 2) === 5, "multiply(2.5, 2) should be 5");
+
+            // Test Divide
+            assert(divide(6, 3) === 2, "divide(6, 3) should be 2");
+            assert(divide(10, 4) === 2.5, "divide(10, 4) should be 2.5");
+            let divByZeroError = false;
+            try {
+                divide(5, 0);
+            } catch (e) {
+                divByZeroError = e.message === "Cannot divide by zero";
+            }
+            assert(divByZeroError, "divide(5, 0) should throw 'Cannot divide by zero' error");
+
+            console.log("--- Unit Tests Complete ---");
+        }
+
+        // Run tests on load (for demonstration purposes)
+        runUnitTests();
+
+
+        // --- Step 13: Write integration tests for UI interactions and overall flow. ---
+        // Integration tests would typically involve simulating user interactions (e.g., button clicks)
+        // and asserting the state of the display and internal variables.
+        // This is complex to do purely inline without a testing framework like Cypress or Playwright.
+        // Below is a conceptual outline of how one might think about it.
+        function runIntegrationTestsConceptual() {
+            console.log("\n--- Conceptual Integration Tests (Not fully executable inline) ---");
+
+            // Scenario 1: Basic addition
+            // Simulate clicks: '1', '+', '2', '='
+            // Expected display: '3'
+            console.log("Conceptual Test: 1 + 2 = 3");
+
+            // Scenario 2: Chained operations
+            // Simulate clicks: '5', '*', '2', '+', '3', '='
+            // Expected display: '13' (5*2=10, then 10+3=13)
+            console.log("Conceptual Test: 5 * 2 + 3 = 13");
+
+            // Scenario 3: Division by zero error
+            // Simulate clicks: '1', '/', '0', '='
+            // Expected display: 'Cannot divide by zero'
+            console.log("Conceptual Test: 1 / 0 = Error");
+
+            // Scenario 4: Clear button
+            // Simulate clicks: '1', '2', 'C'
+            // Expected display: '0'
+            console.log("Conceptual Test: Clear button resets display");
+
+            // Scenario 5: Clear Entry button
+            // Simulate clicks: '1', '2', '+', '3', 'CE'
+            // Expected display: '0' (current input cleared, previous and operator remain)
+            console.log("Conceptual Test: Clear Entry clears current input");
+
+            console.log("--- Conceptual Integration Tests Complete ---");
+            console.log("Note: Full integration tests require a testing framework to simulate UI events reliably.");
+        }
+
+        runIntegrationTestsConceptual(); // Call the conceptual integration tests
+
+        /*
+         * Step 15: Package the application for distribution (e.g., executable, web build).
+         *         For a web application, this single HTML file *is* the web build.
+         *         It can be hosted on any web server or opened directly in a browser.
+         *         For more complex web apps, this would involve bundling tools (Webpack, Rollup)
+         *         and deployment to a CDN or hosting service.
+         */
+    </script>
+</body>
+</html>
