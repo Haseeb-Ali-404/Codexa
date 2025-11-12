@@ -1,27 +1,32 @@
-import MainSection from "../COMPONENTS/MainSection";
-import PreviewSection from "../COMPONENTS/PreviewSection";
-import Sidebar from "../COMPONENTS/SideBar";
-import '../CSS/Home.css'
-import React, {useState} from "react";
-const Home = () =>{
-    const [previewActive, setpreviewActive] = useState(false)
-    return(
-        <>
-            <div className="HomePage">
-                <div className="SideBar">
-                    <Sidebar/>
-                </div>
-                <div className="Preview">
-                    {previewActive?<PreviewSection />:""}
-                </div>
-                <div className="MainSection">
-                    <MainSection/>
-                </div>
-            </div>
+import React, { useState } from "react";
+import Sidebar from "../components/Sidebar/Sidebar";
+import MainSection from "../components/MainSection/MainSection";
+import PreviewSection from "../components/PreiviewSection/PreviewSection";
+import { ChatProvider } from "../Context/ChatContext";
+import "../CSS/Home.css";
 
-        </>
-    )
-}
+const App = () => {
+  const [previewSection, setpreviewSection] = useState(false);
 
+  return (
+    <ChatProvider>
+      <div className={`dashboard-layout`}>
+        <Sidebar />
+        <MainSection
+          recentProjects={[
+            { id: "p1", name: "Todo App", image:"" },
+            { id: "p2", name: "Weather App", preview: "" },
+            {
+              id: "p3",
+              name: "Portfolio Website",
+              image: "",
+            },
+          ]}
+        />
+        {previewSection ? <PreviewSection /> : ""}
+      </div>
+    </ChatProvider>
+  );
+};
 
-export default Home;
+export default App;

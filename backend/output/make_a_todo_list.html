@@ -1,0 +1,950 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Full-Stack Task Manager (Single HTML File)</title>
+    <style>
+        /* Inline CSS for styling */
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f4f7f6;
+            color: #333;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+        }
+        .container {
+            background-color: #fff;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+            width: 100%;
+            max-width: 800px;
+            margin-bottom: 20px;
+        }
+        h1, h2 {
+            color: #2c3e50;
+            text-align: center;
+            margin-bottom: 25px;
+        }
+        form {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        label {
+            font-weight: bold;
+            margin-bottom: 5px;
+            display: block;
+        }
+        input[type="text"],
+        input[type="password"],
+        textarea,
+        select {
+            width: calc(100% - 20px);
+            padding: 12px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            font-size: 1rem;
+            box-sizing: border-box;
+        }
+        button {
+            background-color: #3498db;
+            color: white;
+            padding: 12px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 1rem;
+            transition: background-color 0.3s ease;
+        }
+        button:hover:not(:disabled) {
+            background-color: #2980b9;
+        }
+        button:disabled {
+            background-color: #95a5a6;
+            cursor: not-allowed;
+        }
+        .btn-danger {
+            background-color: #e74c3c;
+        }
+        .btn-danger:hover:not(:disabled) {
+            background-color: #c0392b;
+        }
+        .btn-secondary {
+            background-color: #7f8c8d;
+        }
+        .btn-secondary:hover:not(:disabled) {
+            background-color: #6c7a7b;
+        }
+        .btn-success {
+            background-color: #2ecc71;
+        }
+        .btn-success:hover:not(:disabled) {
+            background-color: #27ae60;
+        }
+        .message {
+            padding: 10px;
+            margin-bottom: 15px;
+            border-radius: 5px;
+            font-weight: bold;
+            text-align: center;
+        }
+        .message.success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .message.error {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .message.info {
+            background-color: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+        .task-list {
+            list-style: none;
+            padding: 0;
+        }
+        .task-item {
+            background-color: #ecf0f1;
+            border: 1px solid #ddd;
+            padding: 15px;
+            margin-bottom: 10px;
+            border-radius: 8px;
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            transition: background-color 0.3s ease;
+        }
+        .task-item.completed {
+            background-color: #dff0d8;
+            text-decoration: line-through;
+            color: #555;
+        }
+        .task-item-content {
+            flex-grow: 1;
+            margin-right: 15px;
+        }
+        .task-item-content h3 {
+            margin: 0 0 5px 0;
+            color: #34495e;
+        }
+        .task-item-content p {
+            margin: 0;
+            font-size: 0.9em;
+            color: #666;
+        }
+        .task-item-actions {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-top: 10px;
+        }
+        .task-item-actions button {
+            padding: 8px 12px;
+            font-size: 0.85rem;
+        }
+        .auth-section, .task-section {
+            display: none; /* Hidden by default, shown based on auth status */
+        }
+        .auth-section.active, .task-section.active {
+            display: block;
+        }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid #eee;
+        }
+        .header h1 {
+            margin: 0;
+            font-size: 1.8em;
+        }
+        .filter-sort-controls {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+        .filter-sort-controls div {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        .filter-sort-controls select {
+            width: auto;
+            min-width: 120px;
+            padding: 8px;
+        }
+        .edit-task-form {
+            margin-top: 15px;
+            padding: 15px;
+            background-color: #f9f9f9;
+            border: 1px solid #eee;
+            border-radius: 8px;
+        }
+        .loading-spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            animation: spin 1s linear infinite;
+            display: inline-block;
+            vertical-align: middle;
+            margin-left: 10px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .hidden {
+            display: none !important;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Task Manager</h1>
+            <div id="auth-status">
+                <span id="username-display" class="hidden"></span>
+                <button id="logout-button" class="btn-secondary hidden">Logout</button>
+            </div>
+        </div>
+
+        <div id="message-area" class="message hidden"></div>
+
+        <!-- Authentication Section -->
+        <div id="auth-section" class="auth-section active">
+            <h2>Welcome! Please Login or Register</h2>
+
+            <div style="display: flex; gap: 20px; justify-content: center; margin-bottom: 20px;">
+                <button id="show-login-form-btn">Login</button>
+                <button id="show-register-form-btn">Register</button>
+            </div>
+
+            <form id="login-form" class="hidden">
+                <h3>Login</h3>
+                <label for="login-username">Username:</label>
+                <input type="text" id="login-username" required>
+                <label for="login-password">Password:</label>
+                <input type="password" id="login-password" required>
+                <button type="submit" id="login-btn">Login</button>
+            </form>
+
+            <form id="register-form" class="hidden">
+                <h3>Register</h3>
+                <label for="register-username">Username:</label>
+                <input type="text" id="register-username" required>
+                <label for="register-password">Password:</label>
+                <input type="password" id="register-password" required>
+                <button type="submit" id="register-btn">Register</button>
+            </form>
+        </div>
+
+        <!-- Task Management Section -->
+        <div id="task-section" class="task-section">
+            <h2>Your Tasks</h2>
+
+            <form id="add-task-form">
+                <h3>Add New Task</h3>
+                <label for="task-title">Title:</label>
+                <input type="text" id="task-title" placeholder="e.g., Buy groceries" required>
+                <label for="task-description">Description (Optional):</label>
+                <textarea id="task-description" rows="3" placeholder="e.g., Milk, eggs, bread"></textarea>
+                <button type="submit" id="add-task-btn">Add Task</button>
+            </form>
+
+            <div class="filter-sort-controls">
+                <div>
+                    <label for="filter-status">Filter:</label>
+                    <select id="filter-status">
+                        <option value="all">All</option>
+                        <option value="active">Active</option>
+                        <option value="completed">Completed</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="sort-by">Sort by:</label>
+                    <select id="sort-by">
+                        <option value="createdAt_desc">Newest First</option>
+                        <option value="createdAt_asc">Oldest First</option>
+                        <option value="title_asc">Title (A-Z)</option>
+                        <option value="title_desc">Title (Z-A)</option>
+                    </select>
+                </div>
+            </div>
+
+            <ul id="task-list" class="task-list">
+                <!-- Tasks will be rendered here -->
+            </ul>
+        </div>
+    </div>
+
+    <script>
+        // Step 1: Define core features, non-functional requirements, and select the technology stack.
+        // Core Features: User authentication (register, login, logout), Task CRUD (create, read, update, delete),
+        //                Task completion toggle, Filtering and Sorting tasks.
+        // Non-functional requirements: Persistence (via localStorage), Basic error handling, Loading states,
+        //                              User feedback, Single-page application feel.
+        // Technology Stack: HTML, CSS (inline), JavaScript (vanilla, inline).
+        // (Note: This is a highly constrained environment, simulating a full stack within a browser.)
+
+        // --- Simulated Backend (JavaScript functions mimicking API endpoints and database) ---
+        const DB_KEY = 'task_manager_db';
+        let appData = {
+            users: [],
+            tasks: [],
+            nextUserId: 1,
+            nextTaskId: 1
+        };
+
+        // Load data from localStorage on startup
+        function loadDB() {
+            const storedData = localStorage.getItem(DB_KEY);
+            if (storedData) {
+                appData = JSON.parse(storedData);
+            } else {
+                // Initialize with some dummy data if first run
+                appData.users.push({ id: appData.nextUserId++, username: 'testuser', passwordHash: btoa('password') });
+                appData.tasks.push({ id: appData.nextTaskId++, userId: 1, title: 'Learn HTML', description: 'Master the basics of HTML structure.', completed: false, createdAt: Date.now() - 100000, updatedAt: Date.now() - 100000 });
+                appData.tasks.push({ id: appData.nextTaskId++, userId: 1, title: 'Style with CSS', description: 'Add some inline CSS to make it pretty.', completed: false, createdAt: Date.now() - 50000, updatedAt: Date.now() - 50000 });
+                appData.tasks.push({ id: appData.nextTaskId++, userId: 1, title: 'Add JS Interactivity', description: 'Implement all the dynamic features.', completed: true, createdAt: Date.now() - 200000, updatedAt: Date.now() - 200000 });
+            }
+            saveDB(); // Ensure initial state is saved
+        }
+
+        // Save data to localStorage
+        function saveDB() {
+            localStorage.setItem(DB_KEY, JSON.stringify(appData));
+        }
+
+        // Simple password hashing (NOT secure for production, for demo only)
+        function hashPassword(password) {
+            return btoa(password); // Base64 encode
+        }
+
+        // --- Step 2: Design the database schema for tasks and users. (Simulated in JS objects) ---
+        // Users: { id: number, username: string, passwordHash: string }
+        // Tasks: { id: number, userId: number, title: string, description: string, completed: boolean, createdAt: number, updatedAt: number }
+
+        // --- Step 3: Set up the backend project, initialize the server, and establish database connection. ---
+        // (Simulated by `loadDB` and `saveDB` functions and the `appData` object)
+
+        // Simulated Backend API Endpoints
+        const simulateBackend = {
+            // Step 15: Implement user registration, login, and authentication/authorization on the backend.
+            async register(username, password) {
+                return new Promise(resolve => {
+                    setTimeout(() => { // Simulate network delay
+                        // Step 19: Input validation
+                        if (!username || !password) {
+                            return resolve({ success: false, message: 'Username and password are required.' });
+                        }
+                        if (appData.users.some(u => u.username === username)) {
+                            return resolve({ success: false, message: 'Username already exists.' });
+                        }
+                        const newUser = {
+                            id: appData.nextUserId++,
+                            username,
+                            passwordHash: hashPassword(password)
+                        };
+                        appData.users.push(newUser);
+                        saveDB();
+                        resolve({ success: true, message: 'Registration successful. Please log in.' });
+                    }, 500);
+                });
+            },
+
+            async login(username, password) {
+                return new Promise(resolve => {
+                    setTimeout(() => { // Simulate network delay
+                        // Step 19: Input validation
+                        if (!username || !password) {
+                            return resolve({ success: false, message: 'Username and password are required.' });
+                        }
+                        const user = appData.users.find(u => u.username === username && u.passwordHash === hashPassword(password));
+                        if (user) {
+                            // In a real app, this would generate a JWT or session token
+                            const token = btoa(JSON.stringify({ userId: user.id, username: user.username, timestamp: Date.now() }));
+                            resolve({ success: true, message: 'Login successful!', token, userId: user.id, username: user.username });
+                        } else {
+                            resolve({ success: false, message: 'Invalid username or password.' });
+                        }
+                    }, 500);
+                });
+            },
+
+            // Step 4: Implement the API endpoint for creating new tasks.
+            async createTask(userId, taskData) {
+                return new Promise(resolve => {
+                    setTimeout(() => { // Simulate network delay
+                        // Step 19: Input validation
+                        if (!userId) {
+                            return resolve({ success: false, message: 'Authentication required.' });
+                        }
+                        if (!taskData || !taskData.title) {
+                            return resolve({ success: false, message: 'Task title is required.' });
+                        }
+
+                        const newTask = {
+                            id: appData.nextTaskId++,
+                            userId: userId,
+                            title: taskData.title,
+                            description: taskData.description || '',
+                            completed: false,
+                            createdAt: Date.now(),
+                            updatedAt: Date.now()
+                        };
+                        appData.tasks.push(newTask);
+                        saveDB();
+                        resolve({ success: true, message: 'Task created successfully!', task: newTask });
+                    }, 500);
+                });
+            },
+
+            // Step 5: Implement the API endpoint for retrieving all tasks.
+            // Step 17: Enhance the task listing API endpoint to support filtering (e.g., by completion status) and sorting.
+            async getTasks(userId, filters = {}, sort = {}) {
+                return new Promise(resolve => {
+                    setTimeout(() => { // Simulate network delay
+                        if (!userId) {
+                            return resolve({ success: false, message: 'Authentication required.' });
+                        }
+
+                        let userTasks = appData.tasks.filter(task => task.userId === userId);
+
+                        // Filtering
+                        if (filters.status && filters.status !== 'all') {
+                            userTasks = userTasks.filter(task => {
+                                if (filters.status === 'active') return !task.completed;
+                                if (filters.status === 'completed') return task.completed;
+                                return true;
+                            });
+                        }
+
+                        // Sorting
+                        if (sort.by) {
+                            userTasks.sort((a, b) => {
+                                let valA = a[sort.by];
+                                let valB = b[sort.by];
+
+                                if (typeof valA === 'string') {
+                                    valA = valA.toLowerCase();
+                                    valB = valB.toLowerCase();
+                                }
+
+                                if (valA < valB) return sort.order === 'asc' ? -1 : 1;
+                                if (valA > valB) return sort.order === 'asc' ? 1 : -1;
+                                return 0;
+                            });
+                        }
+
+                        resolve({ success: true, tasks: userTasks });
+                    }, 300);
+                });
+            },
+
+            // Step 9: Implement the API endpoint for marking a task as complete or incomplete.
+            async updateTaskStatus(userId, taskId, completed) {
+                return new Promise(resolve => {
+                    setTimeout(() => { // Simulate network delay
+                        if (!userId) {
+                            return resolve({ success: false, message: 'Authentication required.' });
+                        }
+                        const taskIndex = appData.tasks.findIndex(t => t.id === taskId && t.userId === userId);
+                        if (taskIndex === -1) {
+                            return resolve({ success: false, message: 'Task not found or unauthorized.' });
+                        }
+
+                        appData.tasks[taskIndex].completed = completed;
+                        appData.tasks[taskIndex].updatedAt = Date.now();
+                        saveDB();
+                        resolve({ success: true, message: 'Task status updated!', task: appData.tasks[taskIndex] });
+                    }, 300);
+                });
+            },
+
+            // Step 11: Implement the API endpoint for deleting a task.
+            async deleteTask(userId, taskId) {
+                return new Promise(resolve => {
+                    setTimeout(() => { // Simulate network delay
+                        if (!userId) {
+                            return resolve({ success: false, message: 'Authentication required.' });
+                        }
+                        const initialLength = appData.tasks.length;
+                        appData.tasks = appData.tasks.filter(t => !(t.id === taskId && t.userId === userId));
+                        if (appData.tasks.length === initialLength) {
+                            return resolve({ success: false, message: 'Task not found or unauthorized.' });
+                        }
+                        saveDB();
+                        resolve({ success: true, message: 'Task deleted successfully!' });
+                    }, 300);
+                });
+            },
+
+            // Step 13: Implement the API endpoint for updating task details (e.g., title, description).
+            async updateTask(userId, taskId, newData) {
+                return new Promise(resolve => {
+                    setTimeout(() => { // Simulate network delay
+                        if (!userId) {
+                            return resolve({ success: false, message: 'Authentication required.' });
+                        }
+                        // Step 19: Input validation
+                        if (!newData || (!newData.title && !newData.description)) {
+                            return resolve({ success: false, message: 'No update data provided.' });
+                        }
+                        if (newData.title && newData.title.trim() === '') {
+                            return resolve({ success: false, message: 'Task title cannot be empty.' });
+                        }
+
+                        const taskIndex = appData.tasks.findIndex(t => t.id === taskId && t.userId === userId);
+                        if (taskIndex === -1) {
+                            return resolve({ success: false, message: 'Task not found or unauthorized.' });
+                        }
+
+                        const task = appData.tasks[taskIndex];
+                        if (newData.title !== undefined) task.title = newData.title;
+                        if (newData.description !== undefined) task.description = newData.description;
+                        task.updatedAt = Date.now();
+                        saveDB();
+                        resolve({ success: true, message: 'Task updated successfully!', task: task });
+                    }, 500);
+                });
+            }
+        };
+
+        // --- Frontend Logic ---
+
+        // Global state for frontend
+        let currentUser = null;
+        let currentToken = null;
+        let currentFilters = { status: 'all' };
+        let currentSort = { by: 'createdAt', order: 'desc' };
+
+        // DOM Elements
+        const messageArea = document.getElementById('message-area');
+        const authSection = document.getElementById('auth-section');
+        const taskSection = document.getElementById('task-section');
+        const loginForm = document.getElementById('login-form');
+        const registerForm = document.getElementById('register-form');
+        const showLoginFormBtn = document.getElementById('show-login-form-btn');
+        const showRegisterFormBtn = document.getElementById('show-register-form-btn');
+        const logoutButton = document.getElementById('logout-button');
+        const usernameDisplay = document.getElementById('username-display');
+        const addTaskForm = document.getElementById('add-task-form');
+        const taskTitleInput = document.getElementById('task-title');
+        const taskDescriptionInput = document.getElementById('task-description');
+        const taskList = document.getElementById('task-list');
+        const filterStatusSelect = document.getElementById('filter-status');
+        const sortBySelect = document.getElementById('sort-by');
+
+        // Step 20: Develop robust error display, loading states, and user feedback mechanisms on the frontend.
+        function displayMessage(type, message) {
+            messageArea.textContent = message;
+            messageArea.className = `message ${type}`;
+            messageArea.classList.remove('hidden');
+            setTimeout(() => {
+                messageArea.classList.add('hidden');
+            }, 5000);
+        }
+
+        function setLoading(buttonId, isLoading) {
+            const button = document.getElementById(buttonId);
+            if (button) {
+                button.disabled = isLoading;
+                if (isLoading) {
+                    button.innerHTML += ' <span class="loading-spinner"></span>';
+                } else {
+                    button.innerHTML = button.innerHTML.replace(/ <span class="loading-spinner"><\/span>/, '');
+                }
+            }
+        }
+
+        // Step 16: Develop user authentication and session management on the frontend, including protected routes.
+        function checkAuth() {
+            const storedToken = localStorage.getItem('authToken');
+            const storedUser = localStorage.getItem('currentUser');
+
+            if (storedToken && storedUser) {
+                try {
+                    const parsedUser = JSON.parse(storedUser);
+                    currentUser = parsedUser;
+                    currentToken = storedToken;
+                    authSection.classList.remove('active');
+                    taskSection.classList.add('active');
+                    usernameDisplay.textContent = `Welcome, ${currentUser.username}!`;
+                    usernameDisplay.classList.remove('hidden');
+                    logoutButton.classList.remove('hidden');
+                    fetchAndRenderTasks();
+                } catch (e) {
+                    console.error("Failed to parse stored user data:", e);
+                    logout(); // Clear invalid session
+                }
+            } else {
+                logout(); // Ensure clean state if no token or user
+            }
+        }
+
+        function logout() {
+            localStorage.removeItem('authToken');
+            localStorage.removeItem('currentUser');
+            currentUser = null;
+            currentToken = null;
+            authSection.classList.add('active');
+            taskSection.classList.remove('active');
+            usernameDisplay.classList.add('hidden');
+            logoutButton.classList.add('hidden');
+            taskList.innerHTML = ''; // Clear tasks
+            displayMessage('info', 'You have been logged out.');
+            // Reset forms
+            loginForm.reset();
+            registerForm.reset();
+            loginForm.classList.remove('hidden');
+            registerForm.classList.add('hidden');
+        }
+
+        // Event Listeners for Auth forms
+        showLoginFormBtn.addEventListener('click', () => {
+            loginForm.classList.remove('hidden');
+            registerForm.classList.add('hidden');
+        });
+
+        showRegisterFormBtn.addEventListener('click', () => {
+            registerForm.classList.remove('hidden');
+            loginForm.classList.add('hidden');
+        });
+
+        loginForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const username = document.getElementById('login-username').value;
+            const password = document.getElementById('login-password').value;
+
+            setLoading('login-btn', true);
+            const result = await simulateBackend.login(username, password);
+            setLoading('login-btn', false);
+
+            if (result.success) {
+                localStorage.setItem('authToken', result.token);
+                localStorage.setItem('currentUser', JSON.stringify({ id: result.userId, username: result.username }));
+                displayMessage('success', result.message);
+                checkAuth();
+            } else {
+                displayMessage('error', result.message);
+            }
+        });
+
+        registerForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const username = document.getElementById('register-username').value;
+            const password = document.getElementById('register-password').value;
+
+            setLoading('register-btn', true);
+            const result = await simulateBackend.register(username, password);
+            setLoading('register-btn', false);
+
+            if (result.success) {
+                displayMessage('success', result.message);
+                // Optionally auto-login or redirect to login
+                loginForm.classList.remove('hidden');
+                registerForm.classList.add('hidden');
+                document.getElementById('login-username').value = username;
+                document.getElementById('login-password').value = password;
+            } else {
+                displayMessage('error', result.message);
+            }
+        });
+
+        logoutButton.addEventListener('click', logout);
+
+        // Step 7: Develop the frontend component to display the list of tasks fetched from the API.
+        function renderTasks(tasks) {
+            taskList.innerHTML = ''; // Clear existing tasks
+            if (!tasks || tasks.length === 0) {
+                taskList.innerHTML = '<li class="message info">No tasks found. Add a new one!</li>';
+                return;
+            }
+
+            tasks.forEach(task => {
+                const li = document.createElement('li');
+                li.className = `task-item ${task.completed ? 'completed' : ''}`;
+                li.dataset.taskId = task.id;
+
+                li.innerHTML = `
+                    <div class="task-item-content">
+                        <h3>${task.title}</h3>
+                        <p>${task.description || 'No description.'}</p>
+                        <small>Created: ${new Date(task.createdAt).toLocaleString()}</small><br>
+                        <small>Last Updated: ${new Date(task.updatedAt).toLocaleString()}</small>
+                    </div>
+                    <div class="task-item-actions">
+                        <button class="toggle-complete-btn btn-success">${task.completed ? 'Mark Incomplete' : 'Mark Complete'}</button>
+                        <button class="edit-btn btn-secondary">Edit</button>
+                        <button class="delete-btn btn-danger">Delete</button>
+                    </div>
+                `;
+                taskList.appendChild(li);
+            });
+        }
+
+        async function fetchAndRenderTasks() {
+            if (!currentUser) return;
+            displayMessage('info', 'Loading tasks...');
+            const sortParts = currentSort.by + '_' + currentSort.order;
+            sortBySelect.value = sortParts; // Update UI to reflect current sort
+            filterStatusSelect.value = currentFilters.status; // Update UI to reflect current filter
+
+            const result = await simulateBackend.getTasks(currentUser.id, currentFilters, currentSort);
+            if (result.success) {
+                renderTasks(result.tasks);
+                messageArea.classList.add('hidden'); // Clear loading message
+            } else {
+                displayMessage('error', result.message);
+            }
+        }
+
+        // Step 8: Implement the frontend form and logic to add new tasks, integrating with the backend API.
+        addTaskForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            if (!currentUser) {
+                displayMessage('error', 'Please log in to add tasks.');
+                return;
+            }
+
+            const title = taskTitleInput.value.trim();
+            const description = taskDescriptionInput.value.trim();
+
+            if (!title) {
+                displayMessage('error', 'Task title cannot be empty.');
+                return;
+            }
+
+            setLoading('add-task-btn', true);
+            const result = await simulateBackend.createTask(currentUser.id, { title, description });
+            setLoading('add-task-btn', false);
+
+            if (result.success) {
+                displayMessage('success', result.message);
+                addTaskForm.reset();
+                fetchAndRenderTasks(); // Re-fetch and render all tasks
+            } else {
+                displayMessage('error', result.message);
+            }
+        });
+
+        // Event delegation for task actions (toggle, edit, delete)
+        taskList.addEventListener('click', async (e) => {
+            const target = e.target;
+            const taskItem = target.closest('.task-item');
+            if (!taskItem) return;
+
+            const taskId = parseInt(taskItem.dataset.taskId);
+
+            if (target.classList.contains('toggle-complete-btn')) {
+                // Step 10: Develop the frontend functionality to toggle task completion status.
+                const isCompleted = taskItem.classList.contains('completed');
+                setLoading(target.id, true); // No specific ID, so just disable the button
+                target.disabled = true;
+                const result = await simulateBackend.updateTaskStatus(currentUser.id, taskId, !isCompleted);
+                target.disabled = false;
+                setLoading(target.id, false);
+
+                if (result.success) {
+                    displayMessage('success', result.message);
+                    fetchAndRenderTasks();
+                } else {
+                    displayMessage('error', result.message);
+                }
+            } else if (target.classList.contains('delete-btn')) {
+                // Step 12: Develop the frontend functionality to delete tasks.
+                if (!confirm('Are you sure you want to delete this task?')) return;
+                setLoading(target.id, true);
+                target.disabled = true;
+                const result = await simulateBackend.deleteTask(currentUser.id, taskId);
+                target.disabled = false;
+                setLoading(target.id, false);
+
+                if (result.success) {
+                    displayMessage('success', result.message);
+                    fetchAndRenderTasks();
+                } else {
+                    displayMessage('error', result.message);
+                }
+            } else if (target.classList.contains('edit-btn')) {
+                // Step 14: Develop the frontend functionality to edit existing tasks.
+                const currentTask = appData.tasks.find(t => t.id === taskId && t.userId === currentUser.id);
+                if (!currentTask) {
+                    displayMessage('error', 'Task not found for editing.');
+                    return;
+                }
+
+                // Remove any existing edit forms
+                document.querySelectorAll('.edit-task-form').forEach(form => form.remove());
+
+                const editForm = document.createElement('form');
+                editForm.className = 'edit-task-form';
+                editForm.innerHTML = `
+                    <h4>Edit Task</h4>
+                    <label for="edit-title-${taskId}">Title:</label>
+                    <input type="text" id="edit-title-${taskId}" value="${currentTask.title}" required>
+                    <label for="edit-description-${taskId}">Description:</label>
+                    <textarea id="edit-description-${taskId}" rows="3">${currentTask.description}</textarea>
+                    <div style="display: flex; gap: 10px; margin-top: 15px;">
+                        <button type="submit" class="btn-success" id="save-edit-btn-${taskId}">Save Changes</button>
+                        <button type="button" class="btn-secondary cancel-edit-btn">Cancel</button>
+                    </div>
+                `;
+                taskItem.appendChild(editForm);
+
+                editForm.addEventListener('submit', async (e) => {
+                    e.preventDefault();
+                    const newTitle = document.getElementById(`edit-title-${taskId}`).value.trim();
+                    const newDescription = document.getElementById(`edit-description-${taskId}`).value.trim();
+
+                    if (!newTitle) {
+                        displayMessage('error', 'Task title cannot be empty.');
+                        return;
+                    }
+
+                    setLoading(`save-edit-btn-${taskId}`, true);
+                    const result = await simulateBackend.updateTask(currentUser.id, taskId, {
+                        title: newTitle,
+                        description: newDescription
+                    });
+                    setLoading(`save-edit-btn-${taskId}`, false);
+
+                    if (result.success) {
+                        displayMessage('success', result.message);
+                        editForm.remove(); // Remove the edit form
+                        fetchAndRenderTasks();
+                    } else {
+                        displayMessage('error', result.message);
+                    }
+                });
+
+                editForm.querySelector('.cancel-edit-btn').addEventListener('click', () => {
+                    editForm.remove();
+                });
+            }
+        });
+
+        // Step 18: Develop frontend UI controls for filtering and sorting the displayed tasks.
+        filterStatusSelect.addEventListener('change', () => {
+            currentFilters.status = filterStatusSelect.value;
+            fetchAndRenderTasks();
+        });
+
+        sortBySelect.addEventListener('change', () => {
+            const [by, order] = sortBySelect.value.split('_');
+            currentSort.by = by;
+            currentSort.order = order;
+            fetchAndRenderTasks();
+        });
+
+        // Step 21: Write unit and integration tests for both backend API endpoints and critical frontend components.
+        // (Note: Implementing a full testing suite within a single HTML file is highly impractical and outside the scope
+        // of typical browser-based execution. Below is a very basic conceptual "test" function to demonstrate the idea
+        // of calling backend functions and checking results, but it's not a proper testing framework.)
+        async function runSimpleTests() {
+            console.log("--- Running Simple Backend Tests ---");
+            let testUserId = null;
+
+            // Test 1: Registration
+            console.log("Testing registration...");
+            let regResult = await simulateBackend.register('testuser_new', 'password123');
+            console.log('Register result:', regResult);
+            if (regResult.success) {
+                console.log("Registration successful.");
+            } else {
+                console.error("Registration failed:", regResult.message);
+            }
+
+            // Test 2: Login
+            console.log("Testing login...");
+            let loginResult = await simulateBackend.login('testuser_new', 'password123');
+            console.log('Login result:', loginResult);
+            if (loginResult.success) {
+                console.log("Login successful.");
+                testUserId = loginResult.userId;
+            } else {
+                console.error("Login failed:", loginResult.message);
+            }
+
+            if (testUserId) {
+                // Test 3: Create Task
+                console.log("Testing task creation...");
+                let createTaskResult = await simulateBackend.createTask(testUserId, { title: 'Test Task 1', description: 'This is a test task.' });
+                console.log('Create task result:', createTaskResult);
+                if (createTaskResult.success) {
+                    console.log("Task created successfully.");
+                } else {
+                    console.error("Task creation failed:", createTaskResult.message);
+                }
+
+                // Test 4: Get Tasks
+                console.log("Testing get tasks...");
+                let getTasksResult = await simulateBackend.getTasks(testUserId);
+                console.log('Get tasks result:', getTasksResult);
+                if (getTasksResult.success && getTasksResult.tasks.length > 0) {
+                    console.log("Tasks retrieved successfully.");
+                } else {
+                    console.error("Task retrieval failed or no tasks:", getTasksResult.message);
+                }
+
+                // Test 5: Update Task Status
+                if (createTaskResult.success) {
+                    console.log("Testing update task status...");
+                    let updateStatusResult = await simulateBackend.updateTaskStatus(testUserId, createTaskResult.task.id, true);
+                    console.log('Update status result:', updateStatusResult);
+                    if (updateStatusResult.success && updateStatusResult.task.completed) {
+                        console.log("Task status updated successfully.");
+                    } else {
+                        console.error("Task status update failed:", updateStatusResult.message);
+                    }
+                }
+
+                // Test 6: Delete Task
+                if (createTaskResult.success) {
+                    console.log("Testing delete task...");
+                    let deleteTaskResult = await simulateBackend.deleteTask(testUserId, createTaskResult.task.id);
+                    console.log('Delete task result:', deleteTaskResult);
+                    if (deleteTaskResult.success) {
+                        console.log("Task deleted successfully.");
+                    } else {
+                        console.error("Task deletion failed:", deleteTaskResult.message);
+                    }
+                }
+            } else {
+                console.warn("Skipping task tests due to failed login.");
+            }
+            console.log("--- Simple Backend Tests Complete ---");
+        }
+
+
+        // Initial setup on page load
+        document.addEventListener('DOMContentLoaded', () => {
+            loadDB(); // Initialize the simulated database
+            checkAuth(); // Check if user is already logged in
+            // runSimpleTests(); // Uncomment to run basic tests on load
+        });
+
+        // Step 22: Set up a...
+        // (The prompt cuts off here. This likely refers to deployment, CI/CD, or server infrastructure,
+        // which is not applicable to a single HTML file running entirely in the browser.)
+    </script>
+</body>
+</html>
