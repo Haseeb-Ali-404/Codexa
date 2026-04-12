@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+
+dotenv
+.env
+.env.local
+
+backend/__pycache__/
+backend/*.pyc   
+backend/.env
+
+# Node
+node_modules/
+frontend/node_modules/
+
+# Build outputs
+frontend/build/
+dist/
+build/
+
+# Editor
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store
