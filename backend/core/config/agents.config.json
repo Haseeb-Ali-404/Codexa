@@ -1,36 +1,34 @@
 {
-  "defaults": {
-    "timeout_seconds": 120
-  },
   "agents": {
     "planner": {
       "provider": "gemini",
-      "model": "gemini-2.5-flash-lite",
-      "temperature": 0.3,
-      "max_tokens": 2000,
+      "model": "gemini-2.5-pro",
+      "temperature": 0.1,
+      "max_tokens": 4096,
+      "timeout_seconds": 500,
       "fallbacks": [
-        { "provider": "openai", "model": "gpt-4o-mini" },
-        { "provider": "groq", "model": "llama-3.3-70b-versatile" }
+        { "provider": "openai", "model": "gpt-4o-mini" }
       ]
     },
     "developer": {
       "provider": "gemini",
-      "model": "gemini-2.5-flash",
-      "temperature": 0.2,
-      "max_tokens": 3000000,
-      "fallbacks": [
-        { "provider": "openai", "model": "gpt-4o" }
-      ]
+      "model": "gemini-2.5-pro",
+      "temperature": 0.1,
+      "max_tokens": 500000,
+      "timeout_seconds": 900,
+      "fallbacks": []
     },
     "debugger": {
       "provider": "gemini",
-      "model": "gemini-2.5-flash-lite"
+      "model": "gemini-2.5-pro",
+      "timeout_seconds": 300
     },
     "classifier": {
       "provider": "gemini",
-      "model": "gemini-2.5-flash",
+      "model": "gemini-2.5-pro",
       "temperature": 0.1,
-      "max_tokens": 512,
+      "max_tokens": 2084,
+      "timeout_seconds": 500,
       "fallbacks": [
         { "provider": "openai", "model": "gpt-4o-mini" }
       ]
@@ -38,40 +36,45 @@
     "integrator": {
       "provider": "gemini",
       "model": "gemini-2.5-flash-lite",
+      "timeout_seconds": 300,
       "fallbacks": []
     },
     "architect": {
       "provider": "gemini",
-      "model": "gemini-2.5-flash",
+      "model": "gemini-2.5-pro",
       "temperature": 0.2,
       "max_tokens": 4096,
+      "timeout_seconds": 300,
       "fallbacks": [
         { "provider": "anthropic", "model": "claude-3-5-sonnet-20241022" }
       ]
     },
     "chat": {
       "provider": "gemini",
-      "model": "gemini-2.5-flash-lite",
+      "model": "gemini-2.5-pro",
       "temperature": 0.7,
       "max_tokens": 4096,
+      "timeout_seconds": 300,
       "fallbacks": [
         { "provider": "openai", "model": "gpt-4o-mini" }
       ]
     },
     "title": {
       "provider": "gemini",
-      "model": "gemini-2.5-flash-lite",
+      "model": "gemini-2.5-pro",
       "temperature": 0.4,
       "max_tokens": 256,
+      "timeout_seconds": 300,
       "fallbacks": [
         { "provider": "openai", "model": "gpt-4o-mini" }
       ]
     },
     "edit": {
       "provider": "gemini",
-      "model": "gemini-2.5-flash",
+      "model": "gemini-2.5-pro",
       "temperature": 0.15,
       "max_tokens": 32768,
+      "timeout_seconds": 300,
       "fallbacks": [
         { "provider": "openai", "model": "gpt-4o" }
       ]

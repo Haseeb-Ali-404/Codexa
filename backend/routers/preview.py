@@ -1,6 +1,7 @@
 import os
 import subprocess
-import signal
+import threading
+import time
 from pathlib import Path
 from fastapi import APIRouter
 from bson import ObjectId
@@ -30,13 +31,8 @@ CURRENT_PROJECT_ID = None
 def stop_current_project():
     global CURRENT_FRONTEND_PROCESS, CURRENT_BACKEND_PROCESS, CURRENT_PROJECT_ID
 
-    # Kill all Node/Vite processes running in the frontend project directory
-    # and any process listening on the backend port
     if CURRENT_PROJECT_ID:
-        from pathlib import Path
-        import psutil
         frontend_path = BASE_PREVIEW_DIR / CURRENT_PROJECT_ID / "frontend"
-        # Kill Node/Vite (frontend)
         for proc in psutil.process_iter(["pid", "name", "cmdline", "cwd"]):
             try:
                 if (
@@ -48,7 +44,6 @@ def stop_current_project():
             except Exception:
                 continue
 
-        # Kill any process listening on the backend port
         for conn in psutil.net_connections(kind="inet"):
             if conn.laddr and conn.laddr.port == BACKEND_PORT:
                 try:
@@ -124,13 +119,13 @@ def rebuild_backend(project_id: str) -> Path:
 def run_project(project_id: str):
     global CURRENT_FRONTEND_PROCESS, CURRENT_BACKEND_PROCESS, CURRENT_PROJECT_ID
 
-    # 🔥 Stop previous project (important)
+    # Stop previous project
     stop_current_project()
 
     frontend_path = rebuild_frontend(project_id)
     backend_path = rebuild_backend(project_id)
 
-    # ---------------- FRONTEND ----------------
+    # Install frontend deps
     node_modules = frontend_path / "node_modules"
     if not node_modules.exists():
         subprocess.run(
@@ -140,23 +135,28 @@ def run_project(project_id: str):
             check=True
         )
 
-    import time
-    import threading
-
     def monitor_and_fix_frontend(proc, frontend_path):
         try:
-            # Read stderr line by line for up to 10 seconds
             start = time.time()
             while time.time() - start < 10:
                 line = proc.stderr.readline()
                 if not line:
                     break
                 if b"Cannot find module" in line:
-                    # Remove node_modules and package-lock.json, then reinstall
                     subprocess.run(["rmdir", "/s", "/q", "node_modules"], cwd=str(frontend_path), shell=True)
                     subprocess.run(["del", "/f", "/q", "package-lock.json"], cwd=str(frontend_path), shell=True)
-                    subprocess.run(["npm.cmd", "install"], cwd=str(frontend_path), shell=True, check=True)
-                    # Restart frontend process
+                    # subprocess.run(["npm.cmd", "install"], cwd=str(frontend_path), shell=True, check=True)
+                    result = subprocess.run(
+                        ["npm.cmd", "install"],
+                        capture_output=True,
+                        text=True
+                    )
+
+                    print("STDOUT:", result.stdout)
+                    print("STDERR:", result.stderr)
+
+                    if result.returncode != 0:
+                        raise Exception(f"npm install failed:\n{result.stderr}")
                     proc.terminate()
                     new_proc = subprocess.Popen(
                         ["npm.cmd", "run", "dev", "--", "--port", str(FRONTEND_PORT)],
@@ -176,20 +176,12 @@ def run_project(project_id: str):
         shell=True
     )
 
-    # Start a thread to monitor and fix 'Cannot find module' errors
     t = threading.Thread(target=monitor_and_fix_frontend, args=(CURRENT_FRONTEND_PROCESS, frontend_path))
     t.daemon = True
     t.start()
 
-
-    # ---------------- BACKEND ----------------
     CURRENT_BACKEND_PROCESS = subprocess.Popen(
-        [
-            "uvicorn",
-            "main:app",
-            "--host", "127.0.0.1",
-            "--port", str(BACKEND_PORT)
-        ],
+        ["uvicorn", "main:app", "--host", "127.0.0.1", "--port", str(BACKEND_PORT)],
         cwd=str(backend_path),
         shell=True
     )
@@ -220,9 +212,6 @@ def preview_full(project_id: str):
 # ---------------------------------------
 @router.post("/preview/stop/{project_id}")
 def stop_preview(project_id: str):
-    """
-    Stop the currently running project (frontend and backend) in the terminal.
-    """
     stop_current_project()
     return {"ok": True, "status": "stopped"}
 

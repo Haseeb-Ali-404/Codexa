@@ -64,24 +64,38 @@ User message:
         try:
             result = self._llm.complete(messages, self._opts)
             raw = result.text.strip()
-            print("Classifier response:", raw)
+            print("[Classifier] Response:", raw)
         except Exception as e:
-            print("❌ Classifier error:", e)
+            print("[Classifier] Error:", e)
             return {
                 "type": "conversation",
                 "reason": "model_call_failed",
             }
 
-        clean = (
-            raw.replace("```json", "")
-            .replace("```", "")
-            .strip()
-        )
+        # Clean markdown wrappers and fix common issues
+        clean = raw
+        # Remove markdown code blocks
+        if "```json" in clean:
+            clean = clean.split("```json")[1].split("```")[0]
+        elif "```" in clean:
+            clean = clean.split("```")[1].split("```")[0]
+        else:
+            clean = raw.strip()
+        
+        clean = clean.strip()
 
         try:
             return json.loads(clean)
         except Exception as e:
-            print("❌ JSON decode failed:", clean, e)
+            # Try to extract JSON object from text
+            import re
+            match = re.search(r'\{[^}]+\}', clean)
+            if match:
+                try:
+                    return json.loads(match.group(0))
+                except:
+                    pass
+            print("[Classifier] JSON decode failed:", clean[:100], e)
             return {
                 "type": "conversation",
                 "reason": "invalid_json",

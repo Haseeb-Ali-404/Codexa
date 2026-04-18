@@ -32,29 +32,29 @@ class DebuggerAgent:
 
     def validate(self, project_json: dict) -> bool:
         if not project_json or "structure" not in project_json:
-            print("❌ Invalid project JSON: missing 'structure'")
+            print("[Debugger] Invalid project JSON: missing 'structure'")
             return False
 
         all_files = self._collect_files(project_json["structure"])
 
         if self.verbose:
-            print("📁 Files detected:")
+            print("[Debugger] Files detected:")
             for f in sorted(all_files):
                 print("  -", f)
 
         missing_frontend = self.REQUIRED_FRONTEND_FILES - all_files
         if missing_frontend:
-            print("❌ Missing frontend files:", missing_frontend)
+            print("[Debugger] Missing frontend files:", missing_frontend)
             return False
 
         missing_backend = self.REQUIRED_BACKEND_FILES - all_files
         if missing_backend:
-            print("❌ Missing backend files:", missing_backend)
+            print("[Debugger] Missing backend files:", missing_backend)
             return False
 
         if self.verbose:
-            print("✅ Frontend structure valid (React + TSX)")
-            print("✅ Backend structure valid (FastAPI)")
-            print("✅ Project validation passed")
+            print("[Debugger] Frontend structure valid (React + TSX)")
+            print("[Debugger] Backend structure valid (FastAPI)")
+            print("[Debugger] Project validation passed")
 
         return True

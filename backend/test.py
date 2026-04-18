@@ -1,29 +1,19 @@
-import os
-from google import genai
-from dotenv import load_dotenv
+import boto3  
 
-# Load environment variables
-load_dotenv()
+client = boto3.client("bedrock-runtime", region_name="ap-south-2")
 
-# Initialize Gemini client
-client = genai.Client(
-    api_key=os.getenv("GEMINI_API_KEY")
+response = client.converse_stream( 
+    modelId="us.anthropic.claude-haiku-4-5-20251001-v1:0", 
+    messages=[
+        { 
+            "role": "user", 
+            "content": [{"text": "Tell me a short story about a robot."}]
+        }
+    ]
 )
 
-def list_gemini_models():
-    print("🔍 Available Gemini Models:\n")
-
-    models = client.models.list()
-
-    for model in models:
-        print(f"Model Name: {model.name}")
-
-        # Optional: show supported generation methods
-        if hasattr(model, "supported_generation_methods"):
-            print("  Supported methods:", model.supported_generation_methods)
-
-        print("-" * 50)
-
-
-if __name__ == "__main__":
-    list_gemini_models()
+for event in response["stream"]: 
+    if "contentBlockDelta" in event: 
+        delta = event["contentBlockDelta"]["delta"] 
+        if "text" in delta: 
+            print(delta["text"], end="", flush=True)

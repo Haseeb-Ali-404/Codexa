@@ -95,7 +95,7 @@ class PlannerAgent:
                 yield chunk
 
     def plan(self, request: str):
-        print(f"🤔 Creating plan for: '{request}'")
+        print(f"[Planner] Creating plan for: '{request}'")
 
         prompt = self._plan_user_prompt(request)
 
@@ -115,7 +115,7 @@ class PlannerAgent:
                 if not steps:
                     raise RuntimeError("No valid steps extracted")
 
-                print("📌 Extracted Title:", title)
+                print("[Planner] Extracted Title:", title)
                 return {
                     "title": title,
                     "steps": steps,
@@ -127,7 +127,7 @@ class PlannerAgent:
 
                 if "503" in error_str or "UNAVAILABLE" in error_str:
                     print(
-                        f"⚠️ Model overloaded (attempt {attempt + 1}/{self.max_retries}). "
+                        f"[Planner] Model overloaded (attempt {attempt + 1}/{self.max_retries}). "
                         "Retrying..."
                     )
                     if attempt < self.max_retries - 1:
@@ -135,10 +135,10 @@ class PlannerAgent:
                         continue
                     break
 
-                print(f"❌ Planner error: {error_str}")
+                print(f"[Planner] Error: {error_str}")
                 break
 
-        print("⚠️ Planner failed. Using fallback plan.")
+        print("[Planner] Failed. Using fallback plan.")
         print("Last error:", last_error)
 
         return {

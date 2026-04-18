@@ -121,14 +121,14 @@ export function DashboardLayout() {
     const data = await res.json();
     console.log("Preview response:", data);
 
-    if (data.ok) {
+    console.log("Preview response:", data);
+
+    if (data.ok && data.frontend) {
       // ✅ frontend preview
       setPreviewUrl(data.frontend);
-
-      // 🔹 backend URL stored for later use (proxy, health, etc.)
-      // setBackendUrl(data.backend);
-
       setPreviewOpen(true);
+    } else {
+      console.error("Preview failed:", data);
     }
   };
 

@@ -82,10 +82,14 @@ class ProjectPipeline:
 
         planner = PlannerAgent()
         plan_chunks: list[str] = []
-        async for delta in planner.astream_plan_text(user_message):
-            plan_chunks.append(delta)
-            await websocket.send_json({"type": "planner_delta", "text": delta})
-
+        
+        try:
+            async for delta in planner.astream_plan_text(user_message):
+                plan_chunks.append(delta)
+                await websocket.send_json({"type": "planner_delta", "text": delta})
+        except Exception as e:
+            print(f"[Pipeline] Planner stream failed, using sync fallback: {e}")
+        
         raw_plan = "".join(plan_chunks).strip()
         plan = planner.parse_plan_from_raw(raw_plan)
         if not plan:
@@ -108,13 +112,16 @@ class ProjectPipeline:
 
         developer = DeveloperAgent()
         dev_chunks: list[str] = []
-        async for delta in developer.astream_developer_text(
-            plan["title"],
-            plan["steps"],
-            user_message,
-        ):
-            dev_chunks.append(delta)
-            await websocket.send_json({"type": "developer_delta", "text": delta})
+        try:
+            async for delta in developer.astream_developer_text(
+                plan["title"],
+                plan["steps"],
+                user_message,
+            ):
+                dev_chunks.append(delta)
+                await websocket.send_json({"type": "developer_delta", "text": delta})
+        except Exception as e:
+            print(f"[Pipeline] Developer stream failed, using sync fallback: {e}")
 
         raw_dev = "".join(dev_chunks).strip()
         try:

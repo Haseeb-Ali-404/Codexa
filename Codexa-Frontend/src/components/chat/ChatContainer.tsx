@@ -573,7 +573,19 @@ export function ChatContainer({ onCodeGenerated, onCodeEdited }: Props) {
 
     ws.onmessage = (event) => {
       if (!wsGenerationActiveRef.current) return;
-      const data = JSON.parse(event.data);
+      let data;
+      try {
+        data = JSON.parse(event.data);
+      } catch (e) {
+        console.error("WebSocket JSON parse error:", e);
+        // Try to handle as plain text if not JSON
+        const text = event.data;
+        if (typeof text === "string" && text.length > 0) {
+          // Append as raw text conversation chunk
+          enqueueStreamText(text);
+        }
+        return;
+      }
 
       // Streaming conversation (Gemini chunks)
       if (data.type === "conversation_start") {

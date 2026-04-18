@@ -37,7 +37,7 @@ class DeveloperAgent:
             except json.JSONDecodeError:
                 pass
         else:
-            print("❌ LLM output has unbalanced curly braces. Likely incomplete JSON.")
+            print("[Developer] LLM output has unbalanced curly braces. Likely incomplete JSON.")
             raise ValueError(
                 "LLM output is incomplete or truncated. Please try again or reduce output size."
             )
@@ -46,24 +46,28 @@ class DeveloperAgent:
         if json_match:
             json_str = json_match.group(0)
             if not braces_balanced(json_str):
-                print("❌ Extracted JSON string has unbalanced braces. Likely incomplete JSON.")
+                print("[Developer] Extracted JSON string has unbalanced braces. Likely incomplete JSON.")
                 raise ValueError(
                     "Extracted JSON is incomplete or truncated. Please try again or reduce output size."
                 )
             try:
                 return json.loads(json_str)
             except json.JSONDecodeError as e:
-                print("❌ Regex-extracted JSON still invalid:", e)
+                print("[Developer] Regex-extracted JSON still invalid:", e)
 
-        cleaned = raw.replace("\\'", "'")
+        # Fix common escape sequence issues from LLM
+        cleaned = raw.replace("\\'", "'").replace('\\"', '"')
+        # Fix any remaining invalid escapes (remove backslash before invalid chars)
+        cleaned = cleaned.replace("\\\\", "\\")
+        
         if braces_balanced(cleaned):
             try:
                 return json.loads(cleaned)
             except json.JSONDecodeError as e:
-                print("❌ All attempts to parse LLM output as JSON failed:", e)
+                print("[Developer] All attempts to parse LLM output as JSON failed:", e)
                 print("Raw output:\n", raw)
                 raise e
-        print("❌ Cleaned LLM output has unbalanced curly braces. Likely incomplete JSON.")
+        print("[Developer] Cleaned LLM output has unbalanced curly braces. Likely incomplete JSON.")
         raise ValueError(
             "LLM output is incomplete or truncated after cleaning. Please try again or reduce output size."
         )
@@ -77,166 +81,167 @@ class DeveloperAgent:
         try:
             return self._parse_llm_output(raw)
         except Exception as e:
-            print("❌ Failed to parse JSON from DeveloperAgent")
+            print("[Developer] Failed to parse JSON from DeveloperAgent")
             print("Raw output:\n", raw)
             raise e
 
     def _build_developer_prompt(self, project_name: str, steps: list, user_message: str) -> str:
-        _ = project_name
         prompt = f"""
-You are a senior full-stack engineer and product developer.
+    You are a senior full-stack engineer and product developer.
 
-You behave like:
-- Lovable.dev
-- Bolt.new
-- Google AI Studio (Code generation mode)
+    ================================================
+    CORE MINDSET
+    ================================================
+    - Build REAL, runnable products
+    - Optimize for: clone → install → run → works
+    - Minimize files but NEVER break architecture
+    - Every file must have a clear purpose
+    - Think in execution, not explanation
 
-Your mindset:
-- You think in terms of real products, not demos
-- You generate the MINIMUM number of files required to build a complete, working product
-- Every file you generate must have a clear purpose
-- You avoid unnecessary abstraction
-- You follow real-world best practices
-- You assume another developer will run this project immediately
-- You assume the project will be executed automatically without manual fixes
+    ================================================
+    INPUT
+    ================================================
+    USER IDEA:
+    {user_message}
 
-Decision rules:
-- Do NOT over-engineer
-- Do NOT create unused files
-- Do NOT repeat logic
-- Prefer clarity over cleverness
-- Prefer fewer files over many files (but never fewer than required)
-- Prefer stability over novelty
-
-You are confident, opinionated, and precise.
-You think like a platform engineer, not a tutorial author.
-
-Your task is to generate a REAL, PRODUCTION-READY,
-MULTI-FOLDER FULL-STACK SOFTWARE PROJECT.
-
-USER IDEA:
-{user_message}
-
-PROJECT PLAN:
-"""
+    PROJECT PLAN:
+    """
         for step in steps:
             prompt += f"- {step}\n"
+
         prompt += """
-STRICT REQUIREMENTS (DO NOT VIOLATE):
+    ================================================
+    GLOBAL RULES
+    ================================================
+    - Generate ONLY runnable code
+    - NO placeholders
+    - NO comments
+    - NO markdown
+    - RETURN ONLY valid JSON
 
-================================================
-GENERAL RULES:
-================================================
-- Generate REAL, runnable code
-- NO placeholders
-- NO inline CSS
-- NO Tailwind CSS
-- NO Create React App
-- NO Next.js
-- NO explanations
-- NO markdown
-- NO comments
-- RETURN ONLY VALID JSON
-- Assume the code will be executed immediately after generation
+    ================================================
+    CRITICAL: DEPENDENCY STRATEGY
+    ================================================
+    - Use EXACT versions (no ^, ~, latest)
+    - Versions MUST be realistic and commonly used together
+    - DO NOT guess unknown versions
+    - Prefer known stable combinations
+    - NEVER generate non-existent versions
+    - The project MUST pass:
+    npm install
+    WITHOUT errors
 
-================================================
-FRONTEND REQUIREMENTS (VERY STRICT):
-================================================
-- Framework: React 18 + Vite
-- Language: TypeScript (TSX)
-- Backend Port: 7979
-- Styling: Plain external CSS files ONLY
-- Entry file: src/main.tsx (Vite standard)
-- Functional components only
-- Clean and realistic UI (via CSS files only)
+    ================================================
+    FRONTEND (STRICT)
+    ================================================
+    - React 18 + Vite + TypeScript
+    - NO Tailwind
+    - NO inline styles
+    - CSS files only
 
-DEPENDENCY STABILITY RULES (NON-NEGOTIABLE):
-- NEVER use "latest", "^", "~", or loose semver ranges
-- ALL dependencies MUST be pinned to exact versions
-- Use only stable, widely adopted versions
-- Avoid experimental, beta, or recently released versions
-- Avoid unnecessary build tools, polyfills, or Babel plugins
-- Minimize transitive dependencies
+    SAFE DEPENDENCIES (USE EXACTLY):
+    - react: 18.2.0
+    - react-dom: 18.2.0
+    - vite: 5.0.10
+    - @vitejs/plugin-react: 4.2.1
+    - typescript: 5.3.3
+    - @types/react: 18.2.61
+    - @types/react-dom: 18.2.19
 
-REACT + VITE SAFE BASELINE (FOLLOW THIS):
-- react: 18.2.0
-- react-dom: 18.2.0
-- vite: 5.0.x (stable)
-- @vitejs/plugin-react: 4.x (stable)
-- @types/react: pinned
-- @types/react-dom: pinned
+    RULES:
+    - Do NOT force exact match between react and @types
+    - If unsure about any @types → DO NOT include it
 
-Do NOT add extra frontend dependencies unless absolutely required.
+    ================================================
+    FRONTEND STRUCTURE (STRICT)
+    ================================================
+    frontend/
+    ├── index.html
+    ├── package.json
+    ├── vite.config.ts
+    ├── tsconfig.node.json
+    └── src/
+        ├── main.tsx
+        ├── App.tsx
+        ├── index.css
+        ├── components/
+        └── pages/
 
-================================================
-FRONTEND STRUCTURE (MUST MATCH EXACTLY):
-================================================
-frontend/
-├── index.html
-├── package.json
-├── vite.config.ts
-├── tsconfig.node.json
-└── src/
-    ├── main.tsx
-    ├── App.tsx
-    ├── index.css
-    ├── components/
-    └── pages/
+    ================================================
+    BACKEND (STRICT)
+    ================================================
+    - Python + FastAPI + MongoDB
 
-================================================
-BACKEND REQUIREMENTS:
-================================================
-- Language: Python
-- Framework: FastAPI
-- Database: MongoDB (motor or pymongo)
-- Proper API routing
-- Proper project structure
-- Entry point MUST be backend/main.py with `app = FastAPI()`
-- Backend must be runnable without modification
+    USE EXACT VERSIONS:
+    - fastapi==0.109.2
+    - uvicorn==0.27.1
+    - motor==3.3.2
+    - pymongo==4.6.1
+    - pydantic==2.6.1
 
-================================================
-BACKEND STRUCTURE (MUST MATCH):
-================================================
-backend/
-├── main.py
-├── requirements.txt
-├── app/
-│   ├── __init__.py
-│   ├── database.py
-│   ├── models.py
-│   ├── routes.py
-│   └── schemas.py
+    RULES:
+    - Use Pydantic v2 syntax ONLY
+    - Proper request/response schemas
+    - No broken imports
 
-================================================
-OUTPUT FORMAT (VERY IMPORTANT):
-================================================
-RETURN ONLY VALID JSON IN THIS EXACT FORMAT:
+    ================================================
+    BACKEND STRUCTURE
+    ================================================
+    backend/
+    ├── main.py
+    ├── requirements.txt
+    ├── app/
+    │   ├── __init__.py
+    │   ├── database.py
+    │   ├── models.py
+    │   ├── routes.py
+    │   └── schemas.py
 
-{
+    ================================================
+    API INTEGRATION RULE
+    ================================================
+    - Frontend MUST call:
+    http://localhost:7979
+    - Routes MUST match backend exactly
+
+    ================================================
+    FINAL VALIDATION (MANDATORY)
+    ================================================
+    Before output, ensure:
+
+    - npm install works
+    - vite dev runs
+    - backend runs with uvicorn
+    - no dependency conflicts
+    - no missing imports
+
+    If any issue exists → FIX before output
+
+    ================================================
+    OUTPUT FORMAT (STRICT)
+    ================================================
+    {
     "project_type": "fullstack",
     "structure": [
         {
-            "type": "folder",
-            "name": "frontend",
-            "children": []
+        "type": "folder",
+        "name": "frontend",
+        "children": []
         },
         {
-            "type": "folder",
-            "name": "backend",
-            "children": []
+        "type": "folder",
+        "name": "backend",
+        "children": []
         }
     ]
-}
+    }
 
-RULES FOR FILES ARRAY:
-- Every required file must be included
-- Each file must contain FULL, VALID code
-- File paths must be valid (no spaces, no special characters)
-- CSS must be in .css files ONLY
-- The project MUST run without manual dependency fixes
-"""
+    - Include ALL required files
+    - Each file must contain FULL valid code
+    - Project must run without manual fixes
+    """
         return prompt
-
+    
     async def astream_developer_text(
         self, project_name: str, steps: list, user_message: str
     ):
@@ -251,7 +256,7 @@ RULES FOR FILES ARRAY:
         return self._parse_llm_output(raw)
 
     def generate_project(self, project_name: str, steps: list, user_message: str):
-        print("🧑‍💻 DeveloperAgent generating full-stack project...")
+        print("[DeveloperAgent] Generating full-stack project...")
 
         prompt = self._build_developer_prompt(project_name, steps, user_message)
         project_json = self._generate_json(prompt)
