@@ -2,6 +2,7 @@ from core.agents.chat_agent import ChatAgent as _ChatAgentCore
 from core.agents.classifier_agent import ClassifierAgent as _ClassifierAgentCore
 from core.agents.debugger_agent import DebuggerAgent as _DebuggerAgentCore
 from core.agents.developer_agent import DeveloperAgent as _DeveloperAgentCore
+from core.agents.orchestrator_agent import OrchestratorAgent as _OrchestratorAgentCore
 from core.agents.integrator_agent import IntegratorAgent as _IntegratorAgentCore
 from core.agents.planner_agent import PlannerAgent as _PlannerAgentCore
 from core.agents.architect_agent import ArchitectAgent as _ArchitectAgentCore
@@ -17,18 +18,38 @@ def _make_agent(agent_type, model_name=None, **kwargs):
 
 
 class DeveloperAgent:
+    """
+    Primary: OrchestratorAgent (multi-call, Lovable-style).
+    Fallback: legacy single-call DeveloperAgent if orchestrator fails.
+    """
     def __init__(self, model_name: str | None = None, **kwargs):
-        self._inner = _make_agent("developer", model_name, **kwargs)
+        self._orchestrator = _make_agent("orchestrator", model_name, **kwargs)
+        self._fallback = _make_agent("developer", model_name, **kwargs)
 
     def generate_project(self, project_name: str, steps: list, user_message: str):
-        return self._inner.generate_project(project_name, steps, user_message)
+        try:
+            result = self._orchestrator.generate_project(project_name, steps, user_message)
+            if result and "structure" in result and result["structure"]:
+                return result
+            print("[DeveloperAgent] Orchestrator returned empty structure, falling back")
+        except Exception as e:
+            print(f"[DeveloperAgent] Orchestrator failed ({e}), falling back to single-call")
+        return self._fallback.generate_project(project_name, steps, user_message)
 
     async def astream_developer_text(self, project_name: str, steps: list, user_message: str):
-        async for chunk in self._inner.astream_developer_text(project_name, steps, user_message):
-            yield chunk
+        try:
+            async for chunk in self._orchestrator.astream_developer_text(project_name, steps, user_message):
+                yield chunk
+        except Exception as e:
+            print(f"[DeveloperAgent] Orchestrator stream failed ({e}), falling back")
+            async for chunk in self._fallback.astream_developer_text(project_name, steps, user_message):
+                yield chunk
 
     def parse_project_from_raw(self, raw: str):
-        return self._inner.parse_project_from_raw(raw)
+        try:
+            return self._orchestrator.parse_project_from_raw(raw)
+        except Exception:
+            return self._fallback.parse_project_from_raw(raw)
 
 
 class PlannerAgent:
@@ -68,11 +89,23 @@ class ChatAgent:
     def convert_messages_to_text(messages: list) -> str:
         return _ChatAgentCore.convert_messages_to_text(messages)
 
-    def respond(self, project_id: str, user_message: str) -> str:
-        return self._inner.respond(project_id, user_message)
+    def respond(
+        self,
+        project_id: str,
+        user_message: str,
+        project_context: str | None = None,
+    ) -> str:
+        return self._inner.respond(project_id, user_message, project_context=project_context)
 
-    async def stream_respond(self, project_id: str, user_message: str):
-        async for piece in self._inner.stream_respond(project_id, user_message):
+    async def stream_respond(
+        self,
+        project_id: str,
+        user_message: str,
+        project_context: str | None = None,
+    ):
+        async for piece in self._inner.stream_respond(
+            project_id, user_message, project_context=project_context
+        ):
             yield piece
 
 
@@ -93,6 +126,11 @@ class DebuggerAgent:
 
     def validate(self, project_json: dict) -> bool:
         return self._inner.validate(project_json)
+
+    def fix_flat_files(self, flat_files: list) -> dict:
+        """Scan flat file list, inject missing npm/pip deps, return report."""
+        from core.validation.dependency_injector import fix_flat_files as _fix
+        return _fix(flat_files)
 
 
 class Integrator:

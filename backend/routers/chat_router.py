@@ -33,12 +33,51 @@ edit_agent = EditAgent()
 
 
 def _memory_hint_for_edit(chat_id: str) -> str:
-    turns = get_trimmed_messages(chat_id, max_messages=8)
-    lines = []
-    for m in turns[-6:]:
-        c = (m.get("content") or "")[:600]
-        lines.append(f'{m.get("role", "user")}: {c}')
+    """Compressed conversation history for the EditAgent to resolve follow-ups."""
+    turns = get_trimmed_messages(chat_id, max_messages=30)
+    recent = turns[-20:]
+    lines: list[str] = []
+    for m in recent:
+        role = m.get("role", "user")
+        content = (m.get("content") or "").strip()
+        if not content:
+            continue
+        if len(content) > 900:
+            content = content[:900] + "…"
+        lines.append(f"{role}: {content}")
     return "\n".join(lines)
+
+
+def _project_context_for_chat(existing_project: dict | None) -> str:
+    """Compact project context string for the ChatAgent so it can answer grounded questions."""
+    if not existing_project:
+        return ""
+    pid = existing_project.get("_id")
+    title = (existing_project.get("title") or "Untitled").strip()
+    description = (existing_project.get("description") or "").strip()
+    try:
+        files = list_files_for_project(str(pid))
+    except Exception:
+        files = []
+
+    manifest_lines: list[str] = []
+    for f in files[:80]:  # cap to keep prompt small
+        path = (f.get("path") or "").strip()
+        if path:
+            manifest_lines.append(f"- {path}")
+    more = max(0, len(files) - len(manifest_lines))
+
+    parts = [f"Project title: {title}"]
+    if description:
+        parts.append(f"User's original request: {description[:400]}")
+    if manifest_lines:
+        manifest = "\n".join(manifest_lines)
+        if more:
+            manifest += f"\n(+{more} more files)"
+        parts.append("File manifest:\n" + manifest)
+    else:
+        parts.append("File manifest: (empty)")
+    return "\n\n".join(parts)
 
 
 def run_code_edit(
@@ -80,9 +119,12 @@ def run_code_edit(
 
 
 def get_title_from_message(message: str) -> str:
-    title_agent = create_agent("title")
-    return title_agent.generate_title(message)
-
+    """Fast rule-based title generation - no LLM call needed."""
+    # Remove extra whitespace and truncate to first 40 chars
+    clean = message.strip().replace("\n", " ")
+    if len(clean) <= 40:
+        return clean
+    return clean[:37] + "..."
 
 
 @router.post("/")
@@ -135,17 +177,14 @@ def chat(payload: ChatPayload):
             chat_id=chat_id,
             plan = pipeline_result["plan"],
         )
-        
+        update_chat_title(chat_id, user_id, pipeline_result["title"])
+
         project_json = pipeline_result["project"]
-        
-          # -------------------------
-        # 💾 SAVE GENERATED FILES (NEW)
-        # -------------------------
         save_files(
             project_id=project_id,
             structure=project_json["structure"]
         )
-        
+
         return {
             "ok": True,
             "type": "project",
@@ -182,7 +221,8 @@ def chat(payload: ChatPayload):
         }
 
     # ---------- CONVERSATIONAL MODE ----------
-    reply = chat_agent.respond(chat_id, user_message)
+    project_context = _project_context_for_chat(existing_project)
+    reply = chat_agent.respond(chat_id, user_message, project_context=project_context)
 
     return {
         "ok": True,
@@ -311,12 +351,18 @@ async def websocket_chat(websocket: WebSocket):
                 plan=pipeline_result["plan"],
             )
 
+            update_chat_title(chat_id, user_id, pipeline_result["title"])
+
             project_json = pipeline_result["project"]
             save_files(
                 project_id=project_id,
                 structure=project_json["structure"],
             )
-            await websocket.send_json({"type": "done", "new_project_id": project_id})
+            await websocket.send_json({
+                "type": "done",
+                "new_project_id": project_id,
+                "chat_title": pipeline_result["title"],
+            })
             print(f"New Project ID: {project_id}")
 
         # CODE EDIT — stream structured file updates
@@ -355,7 +401,10 @@ async def websocket_chat(websocket: WebSocket):
                 }
             )
             try:
-                async for piece in chat_agent.stream_respond(chat_id, message):
+                project_context = _project_context_for_chat(existing_project)
+                async for piece in chat_agent.stream_respond(
+                    chat_id, message, project_context=project_context
+                ):
                     if piece:
                         await websocket.send_json(
                             {

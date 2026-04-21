@@ -6,6 +6,7 @@ import {
   useCallback,
 } from "react";
 import { ChatMessage } from "./ChatMessage";
+import type { PlannerPipelineState, StageStatus } from "./PlannerStageMessage";
 import { MessageInput, type ChatAttachmentPayload } from "./MessageInput";
 import {
   Sparkles,
@@ -42,6 +43,7 @@ interface Message {
     content: string;
   };
   attachments?: MessageAttachmentView[];
+  pipeline?: PlannerPipelineState;
 }
 
 interface Props {
@@ -76,7 +78,7 @@ const suggestions = [
 
 export function ChatContainer({ onCodeGenerated, onCodeEdited }: Props) {
   const { userId } = useAuth();
-  const { refreshData, mergeCodeDiffs } = useAppData();
+  const { refreshData, mergeCodeDiffs, projectFiles, setSelectedFile } = useAppData();
   const { chatId } = useParams();
   const {
     registerMessages,
@@ -101,6 +103,8 @@ export function ChatContainer({ onCodeGenerated, onCodeEdited }: Props) {
   const hideDateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Active assistant message id while WebSocket is streaming tokens */
   const streamingMessageIdRef = useRef<string | null>(null);
+  /** ID of the live planner stage message bubble */
+  const plannerMsgIdRef = useRef<string | null>(null);
   /** Smooth quick “typing”: split network chunks into small rAF batches */
   const streamCharQueueRef = useRef<string[]>([]);
   const streamRafRef = useRef<number | null>(null);
@@ -291,6 +295,7 @@ export function ChatContainer({ onCodeGenerated, onCodeEdited }: Props) {
                   msg.created ||
                   null,
               )?.toISOString() || null,
+            pipeline: msg.pipeline || undefined,
           }));
 
           setMessages(mapped);
@@ -612,6 +617,13 @@ export function ChatContainer({ onCodeGenerated, onCodeEdited }: Props) {
 
       if (data.type === "edit_file" && data.change) {
         mergeCodeDiffs([data.change]);
+        // Auto-select the file that just got edited so the user sees it live
+        // (like Claude Code / Cursor). Match on the relative project path.
+        const editedPath = (data.change?.file || "").trim();
+        if (editedPath) {
+          const match = projectFiles.find((f) => f.path === editedPath);
+          if (match) setSelectedFile(match);
+        }
         setIsLoading(false);
       }
 
@@ -672,35 +684,148 @@ export function ChatContainer({ onCodeGenerated, onCodeEdited }: Props) {
 
       console.log("WS EVENT:", data);
 
-      // 🧠 PLANNER START
+      // ─── PLANNER PIPELINE EVENTS ────────────────────────────────────────────
+
       if (data.type === "planner_start") {
-        addMessage("assistant", "Planning...", "planner");
+        // Create the live planner bubble with an empty pipeline state
+        const msgId = `planner-${Date.now()}`;
+        plannerMsgIdRef.current = msgId;
+        const initialPipeline: PlannerPipelineState = {
+          stages: [1,2,3,4,5].map((n) => ({ stage: n, status: "idle" as StageStatus })),
+          currentStage: 0,
+          isComplete: false,
+        };
+        setIsLoading(false);
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: msgId,
+            role: "assistant",
+            content: "",
+            agent: "planner",
+            createdAt: new Date().toISOString(),
+            pipeline: initialPipeline,
+          },
+        ]);
       }
 
-      // 🧠 PLANNER RESULT
-      if (data.type === "planner_result") {
+      // Stage start — mark stage as running
+      if (data.type === "stage_start" && plannerMsgIdRef.current) {
+        const stageNum = data.stage as number;
+        const msg = data.message as string;
+        setMessages((prev) => prev.map((m) => {
+          if (m.id !== plannerMsgIdRef.current || !m.pipeline) return m;
+          return {
+            ...m,
+            pipeline: {
+              ...m.pipeline,
+              currentStage: stageNum,
+              stages: m.pipeline.stages.map((s) =>
+                s.stage === stageNum ? { ...s, status: "running" as StageStatus, message: msg } : s
+              ),
+            },
+          };
+        }));
+      }
+
+      // Stage complete — mark stage as complete and store output
+      if (data.type === "stage_complete" && plannerMsgIdRef.current) {
+        const stageNum = data.stage as number;
+        const output = data.output as Record<string, unknown>;
+        setMessages((prev) => prev.map((m) => {
+          if (m.id !== plannerMsgIdRef.current || !m.pipeline) return m;
+          return {
+            ...m,
+            pipeline: {
+              ...m.pipeline,
+              stages: m.pipeline.stages.map((s) =>
+                s.stage === stageNum ? { ...s, status: "complete" as StageStatus, output } : s
+              ),
+            },
+          };
+        }));
+      }
+
+      // Stage retry
+      if (data.type === "stage_retry" && plannerMsgIdRef.current) {
+        const stageNum = data.stage as number;
+        const msg = (data.message as string) || "Retrying…";
+        setMessages((prev) => prev.map((m) => {
+          if (m.id !== plannerMsgIdRef.current || !m.pipeline) return m;
+          return {
+            ...m,
+            pipeline: {
+              ...m.pipeline,
+              stages: m.pipeline.stages.map((s) =>
+                s.stage === stageNum ? { ...s, status: "retrying" as StageStatus, message: msg } : s
+              ),
+            },
+          };
+        }));
+      }
+
+      // Stage error
+      if (data.type === "stage_error" && plannerMsgIdRef.current) {
+        const stageNum = data.stage as number;
+        const errors = (data.errors as string[]) || ["Unknown error"];
+        setMessages((prev) => prev.map((m) => {
+          if (m.id !== plannerMsgIdRef.current || !m.pipeline) return m;
+          return {
+            ...m,
+            pipeline: {
+              ...m.pipeline,
+              stages: m.pipeline.stages.map((s) =>
+                s.stage === stageNum ? { ...s, status: "error" as StageStatus, errors } : s
+              ),
+            },
+          };
+        }));
+      }
+
+      // Pipeline complete — mark all done
+      if (data.type === "pipeline_complete" && plannerMsgIdRef.current) {
+        const userPlan = data.user_plan as Record<string, unknown>;
+        const developerPlan = data.developer_plan as Record<string, unknown>;
+        setMessages((prev) => prev.map((m) => {
+          if (m.id !== plannerMsgIdRef.current || !m.pipeline) return m;
+          return {
+            ...m,
+            content: JSON.stringify(userPlan),
+            pipeline: {
+              ...m.pipeline,
+              isComplete: true,
+              userPlan,
+              developerPlan,
+            },
+          };
+        }));
+        plannerMsgIdRef.current = null;
+      }
+
+      // Planner result (legacy / fallback)
+      if (data.type === "planner_result" && !plannerMsgIdRef.current) {
         addMessage("assistant", JSON.stringify(data.data, null, 2), "planner");
       }
 
       // 💻 DEVELOPER START
       if (data.type === "developer_start") {
-        addMessage("assistant", "Generating project...", "developer");
+        addMessage("assistant", "Generating project code…", "developer");
       }
 
       // 💻 DEVELOPER RESULT
       if (data.type === "developer_result") {
-        // optional message
-        addMessage("assistant", "Project generated", "developer");
+        addMessage("assistant", "Project code generated successfully.", "developer");
       }
 
       // 🧪 DEBUGGER START
       if (data.type === "debugger_start") {
-        addMessage("assistant", "Validating project...", "debugger");
+        addMessage("assistant", "Validating project integrity…", "debugger");
       }
 
       // 🧪 DEBUGGER RESULT
       if (data.type === "debugger_result") {
-        addMessage("assistant", `Validation: ${data.data}`, "debugger");
+        const valid = data.data;
+        addMessage("assistant", valid ? "✅ Validation passed — project is ready." : "⚠️ Validation found issues — attempting fixes.", "debugger");
       }
 
       // ✅ DONE

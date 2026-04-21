@@ -12,6 +12,9 @@ import {
   Pencil,
   Save,
   ChevronDown,
+  Sparkles,
+  Plus,
+  Minus,
 } from "lucide-react";
 import { cn, isElementNearBottom } from "@/lib/utils";
 import { toast } from "sonner";
@@ -222,6 +225,8 @@ export function CodePanel({
     singleProjectId,
     codeDiffsByPath,
     setCodeDiffForFile,
+    recentEditedPaths,
+    latestEditedPath,
   } = useAppData();
 
   const [copied, setCopied] = useState(false);
@@ -239,6 +244,49 @@ export function CodePanel({
   const activeDiff = activeFile
     ? codeDiffsByPath[activeFile.path] ?? null
     : null;
+
+  // Diff stats (lines added / removed) — computed cheaply from before/after.
+  const diffStats = useMemo(() => {
+    if (!activeDiff) return { added: 0, removed: 0 };
+    const beforeLines = (activeDiff.before ?? "").split("\n");
+    const afterLines = (activeDiff.after ?? "").split("\n");
+    const beforeSet = new Set(beforeLines);
+    const afterSet = new Set(afterLines);
+    let added = 0;
+    let removed = 0;
+    for (const l of afterLines) if (!beforeSet.has(l)) added++;
+    for (const l of beforeLines) if (!afterSet.has(l)) removed++;
+    return { added, removed };
+  }, [activeDiff]);
+
+  // "Fresh" diff = arrived in the last ~4 seconds. Drives the entry animation.
+  const [freshNonce, setFreshNonce] = useState(0);
+  const isFresh = useMemo(() => {
+    if (!activeDiff?.receivedAt) return false;
+    return Date.now() - activeDiff.receivedAt < 4000;
+  }, [activeDiff?.receivedAt, freshNonce]);
+
+  // Force a re-render ~4s after a fresh diff arrives so the "editing" chrome fades.
+  useEffect(() => {
+    if (!activeDiff?.receivedAt) return;
+    const remaining = 4000 - (Date.now() - activeDiff.receivedAt);
+    if (remaining <= 0) return;
+    const t = setTimeout(() => setFreshNonce((n) => n + 1), remaining + 50);
+    return () => clearTimeout(t);
+  }, [activeDiff?.receivedAt]);
+
+  // When a brand-new edit arrives for a file we aren't currently viewing,
+  // jump to it — same feel as Claude Code's live cursor follow.
+  useEffect(() => {
+    if (!latestEditedPath) return;
+    if (activeFile?.path === latestEditedPath) return;
+    const target = projectFiles.find((f) => f.path === latestEditedPath);
+    if (target) {
+      setSelectedFile(target);
+      setShowFolderView(false);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [latestEditedPath]);
 
   const scrollCodeToBottom = (behavior: ScrollBehavior = "smooth") => {
     const el = codeScrollRef.current;
@@ -361,7 +409,8 @@ export function CodePanel({
     };
 
     projectFiles.forEach((file) => {
-      const parts = file.path.split("/");
+      const parts = (file.path ?? "").split("/").filter(Boolean);
+      if (!parts.length) return;
       let current: FolderNode = root;
 
       parts.forEach((part, index) => {
@@ -421,18 +470,93 @@ export function CodePanel({
   return (
     <div className="relative h-full flex flex-col bg-card/50 border-l border-border/50 overflow-hidden">
       {/* Header */}
-      <div className="px-4 py-3 border-b border-border/50 flex justify-between bg-secondary/30">
-        <div className="flex items-center gap-2">
-          <Braces className="w-4 h-4 text-primary" />
-          <span className="text-sm font-semibold">Code</span>
+      <div className="px-4 py-3 border-b border-border/50 flex items-center justify-between bg-gradient-to-r from-secondary/50 via-secondary/30 to-secondary/20">
+        <div className="flex items-center gap-2.5">
+          <div className="relative flex items-center justify-center w-7 h-7 rounded-lg bg-primary/10 ring-1 ring-primary/20">
+            <Braces className="w-4 h-4 text-primary" />
+            {isFresh && (
+              <span className="absolute -top-0.5 -right-0.5 flex h-2.5 w-2.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500" />
+              </span>
+            )}
+          </div>
+          <div className="flex flex-col leading-tight">
+            <span className="text-sm font-semibold tracking-tight">Code</span>
+            {isFresh && activeFile ? (
+              <span className="text-[10px] text-emerald-500 flex items-center gap-1 font-medium">
+                <Sparkles className="w-3 h-3" />
+                Editing {activeFile.name}
+              </span>
+            ) : activeDiff ? (
+              <span className="text-[10px] text-muted-foreground">
+                Reviewing changes
+              </span>
+            ) : null}
+          </div>
+          {activeDiff && (
+            <div className="ml-2 flex items-center gap-1.5 text-[10px] font-mono">
+              <span className="flex items-center gap-0.5 text-emerald-500">
+                <Plus className="w-3 h-3" />
+                {diffStats.added}
+              </span>
+              <span className="flex items-center gap-0.5 text-rose-500">
+                <Minus className="w-3 h-3" />
+                {diffStats.removed}
+              </span>
+            </div>
+          )}
         </div>
         <button
           onClick={onClose}
-          className="p-1.5 rounded-lg hover:bg-secondary"
+          className="p-1.5 rounded-lg hover:bg-secondary transition-colors"
         >
           <X className="w-4 h-4" />
         </button>
       </div>
+
+      {/* Recent Changes strip — only when there are live diffs */}
+      {recentEditedPaths.length > 0 && (
+        <div className="px-3 py-2 border-b border-border/50 bg-background/30 flex items-center gap-2 overflow-x-auto">
+          <span className="shrink-0 text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
+            Recent edits
+          </span>
+          <div className="flex items-center gap-1.5">
+            {recentEditedPaths.slice(0, 8).map((path) => {
+              const fileObj = projectFiles.find((f) => f.path === path);
+              const name = fileObj?.name ?? path.split("/").pop() ?? path;
+              const isActive = activeFile?.path === path;
+              const diff = codeDiffsByPath[path];
+              const fresh = diff?.receivedAt && Date.now() - diff.receivedAt < 4000;
+              return (
+                <button
+                  key={path}
+                  type="button"
+                  onClick={() => {
+                    if (fileObj) {
+                      setSelectedFile(fileObj);
+                      setShowFolderView(false);
+                      setIsEditing(false);
+                    }
+                  }}
+                  title={path}
+                  className={cn(
+                    "shrink-0 flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium",
+                    "border transition-all duration-200",
+                    isActive
+                      ? "border-primary/50 bg-primary/10 text-primary"
+                      : "border-border/60 text-muted-foreground hover:text-foreground hover:border-border",
+                    fresh && "ring-1 ring-emerald-500/40 animate-pulse",
+                  )}
+                >
+                  <FileIcon className="w-3 h-3" />
+                  {name}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Toolbar */}
       <div className="px-4 py-2 border-b border-border/50 flex justify-between bg-background/20">
@@ -528,22 +652,41 @@ export function CodePanel({
             {renderTree(folderTree)}
           </div>
         ) : activeDiff ? (
-          <DiffEditor
-            height="100%"
-            theme="vs-dark"
-            original={activeDiff.before}
-            modified={activeDiff.after}
-            language={getLanguage(activeFile?.language || "tsx")}
-            options={{
-              readOnly: true,
-              renderSideBySide: true,
-              minimap: { enabled: false },
-              fontSize: 13,
-              scrollBeyondLastLine: false,
-              renderOverviewRuler: true,
-              diffWordWrap: "on",
-            }}
-          />
+          <div
+            key={activeDiff.receivedAt ?? activeDiff.file}
+            className={cn(
+              "h-full w-full relative",
+              "animate-in fade-in-0 zoom-in-[0.98] duration-500",
+              isFresh && "ring-1 ring-inset ring-emerald-500/20",
+            )}
+          >
+            {isFresh && (
+              <div
+                className="pointer-events-none absolute inset-0 z-10 animate-shimmer"
+                style={{
+                  background:
+                    "linear-gradient(90deg, transparent 0%, rgba(16,185,129,0.12) 50%, transparent 100%)",
+                  backgroundSize: "200% 100%",
+                }}
+              />
+            )}
+            <DiffEditor
+              height="100%"
+              theme="vs-dark"
+              original={activeDiff.before}
+              modified={activeDiff.after}
+              language={getLanguage(activeFile?.language || "tsx")}
+              options={{
+                readOnly: true,
+                renderSideBySide: true,
+                minimap: { enabled: false },
+                fontSize: 13,
+                scrollBeyondLastLine: false,
+                renderOverviewRuler: true,
+                diffWordWrap: "on",
+              }}
+            />
+          </div>
         ) : isEditing ? (
           <Editor
             height="100%"
@@ -641,7 +784,7 @@ export function CodePanel({
               </span>
             ) : null}
           </span>
-          <span>{activeFile.content.split("\n").length} lines</span>
+          <span>{(activeFile.content ?? "").split("\n").length} lines</span>
         </div>
       )}
     </div>

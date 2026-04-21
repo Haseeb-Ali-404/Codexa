@@ -204,7 +204,7 @@ export function ChatMessage({ message, index, searchHighlight }: ChatMessageProp
       >
         <div
           className={cn(
-            "rounded-2xl relative px-4 py-3 border shadow-sm",
+            "rounded-2xl relative px-4 py-3 border shadow-sm overflow-hidden min-w-0",
             isUser
               ? "bg-primary text-primary-foreground border-primary/25"
               : "bg-[hsl(var(--chat-surface)/0.92)] text-foreground border-[hsl(var(--chat-surface-border)/0.9)] shadow-md shadow-black/10 dark:shadow-black/30"
@@ -270,7 +270,16 @@ export function ChatMessage({ message, index, searchHighlight }: ChatMessageProp
                 </div>
               )}
               {message.content.trim().length > 0 && (
-                <div className={cn("text-sm leading-relaxed whitespace-pre-wrap", isUser ? "text-primary-foreground" : "text-foreground")}>
+                <div className={cn(
+                  "text-sm leading-relaxed min-w-0 overflow-hidden",
+                  "[&_pre]:overflow-x-auto [&_pre]:max-w-full [&_pre]:rounded-lg [&_pre]:bg-black/40 [&_pre]:p-3 [&_pre]:my-2 [&_pre]:text-xs [&_pre]:font-mono",
+                  "[&_code]:break-all [&_pre_code]:break-normal [&_pre_code]:whitespace-pre",
+                  "[&_p]:leading-relaxed [&_p]:my-1",
+                  "[&_ul]:list-disc [&_ul]:pl-4 [&_ul]:my-1",
+                  "[&_ol]:list-decimal [&_ol]:pl-4 [&_ol]:my-1",
+                  "[&_h1]:text-base [&_h1]:font-bold [&_h2]:text-sm [&_h2]:font-semibold [&_h3]:text-sm [&_h3]:font-semibold",
+                  isUser ? "text-primary-foreground" : "text-foreground",
+                )}>
                   <ReactMarkdown rehypePlugins={[...searchRehypePlugins]}>
                     {message.content}
                   </ReactMarkdown>

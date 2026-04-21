@@ -113,22 +113,17 @@ export function DashboardLayout() {
   const startPreview = async (project_Id: string) => {
     if (!project_Id) return;
 
-    const res = await fetch(
-      `http://localhost:8000/preview/full/${project_Id}`,
-      { method: "POST" },
-    );
+    // Open the panel immediately — the URL arrives via SSE inside PreviewPanel
+    setPreviewUrl("");
+    setPreviewOpen(true);
 
-    const data = await res.json();
-    console.log("Preview response:", data);
-
-    console.log("Preview response:", data);
-
-    if (data.ok && data.frontend) {
-      // ✅ frontend preview
-      setPreviewUrl(data.frontend);
-      setPreviewOpen(true);
-    } else {
-      console.error("Preview failed:", data);
+    try {
+      await fetch(
+        `http://localhost:8000/preview/start/${project_Id}`,
+        { method: "POST" },
+      );
+    } catch (e) {
+      console.error("Preview start error:", e);
     }
   };
 
@@ -304,6 +299,8 @@ export function DashboardLayout() {
                     isOpen={previewOpen}
                     onClose={() => setPreviewOpen(false)}
                     previewUrl={previewUrl}
+                    projectId={singleProjectId ?? undefined}
+                    onUrlReady={(url) => setPreviewUrl(url)}
                   />
                 </ResizablePanel>
               </>

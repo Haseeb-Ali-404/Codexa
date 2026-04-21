@@ -110,6 +110,7 @@ def create_agent(
 
     from core.agents.classifier_agent import ClassifierAgent
     from core.agents.developer_agent import DeveloperAgent
+    from core.agents.orchestrator_agent import OrchestratorAgent
     from core.agents.integrator_agent import IntegratorAgent
     from core.agents.planner_agent import PlannerAgent
     from core.agents.debugger_agent import DebuggerAgent
@@ -121,6 +122,7 @@ def create_agent(
     registry = {
         "planner": PlannerAgent,
         "developer": DeveloperAgent,
+        "orchestrator": OrchestratorAgent,
         "debugger": DebuggerAgent,
         "classifier": ClassifierAgent,
         "integrator": IntegratorAgent,

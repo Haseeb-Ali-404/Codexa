@@ -12,7 +12,30 @@ from core.providers.base import ChatMessage, LLMCallOptions
 from core.utils.resilient import FallbackLLMClient, LLMAllProvidersFailed
 
 MAX_PROMPT_CHARS_PER_FILE = 14000
-MAX_FILES_IN_PROMPT = 12
+MAX_FULL_FILES_IN_PROMPT = 18
+
+
+_KEYWORD_HINTS = {
+    "navbar": ("nav", "header", "navigation", "topbar"),
+    "footer": ("footer",),
+    "header": ("header", "hero", "banner"),
+    "hero": ("hero", "landing", "home", "index"),
+    "login": ("auth", "login", "signin", "sign-in"),
+    "register": ("auth", "register", "signup", "sign-up"),
+    "button": ("button", "btn"),
+    "color": ("theme", "style", "tailwind", "globals", "index.css"),
+    "theme": ("theme", "tailwind", "globals", "index.css"),
+    "dark": ("theme", "dark", "tailwind", "globals", "index.css"),
+    "light": ("theme", "light", "tailwind", "globals", "index.css"),
+    "pricing": ("pricing",),
+    "dashboard": ("dashboard", "admin"),
+    "route": ("route", "router", "app.tsx", "main.tsx"),
+    "api": ("api", "route", "router", "endpoint"),
+    "auth": ("auth", "login", "register", "jwt", "token"),
+    "database": ("db", "database", "model", "schema", "mongo"),
+    "logo": ("logo", "brand", "header", "nav"),
+    "title": ("title", "head", "meta", "index.html", "app.tsx"),
+}
 
 
 def _strip_json_fence(raw: str) -> str:
@@ -22,12 +45,47 @@ def _strip_json_fence(raw: str) -> str:
     return s.strip()
 
 
+def _rank_files(files: list[dict[str, Any]], user_message: str) -> list[dict[str, Any]]:
+    """Score files by how likely they relate to the user's request; stable within bucket."""
+    msg = (user_message or "").lower()
+
+    wanted_substrings: set[str] = set()
+    for kw, hints in _KEYWORD_HINTS.items():
+        if kw in msg:
+            wanted_substrings.update(hints)
+
+    # Direct mentions of file/component names.
+    for word in re.findall(r"[A-Za-z][A-Za-z0-9_-]{2,}", msg):
+        wanted_substrings.add(word.lower())
+
+    def score(f: dict[str, Any]) -> tuple[int, int]:
+        path = (f.get("path") or "").lower()
+        name = path.rsplit("/", 1)[-1]
+        s = 0
+        for sub in wanted_substrings:
+            if sub and sub in path:
+                s += 3 if sub in name else 1
+        # Mild boost for top-level config / entry files always relevant to styling / routing.
+        for anchor in ("app.tsx", "main.tsx", "index.html", "tailwind.config", "globals.css", "index.css", "router"):
+            if anchor in path:
+                s += 1
+        return (-s, len(path))  # higher score first, shorter paths first
+
+    return sorted(files, key=score)
+
+
 class EditAgent:
     SYSTEM = """You are CODEXA's code editor. You MODIFY existing projects; you never rewrite the whole repo unless necessary.
 
-Respond with ONLY valid JSON (no markdown fences). Schema:
+You have access to:
+  (a) the USER'S LATEST REQUEST
+  (b) a compressed RECENT CONVERSATION so you can resolve pronouns and follow-ups (\"make it smaller\", \"no I meant the other one\")
+  (c) a compact PROJECT MANIFEST listing every file path in the project
+  (d) the FULL CONTENT of the files most likely to need changes
+
+Respond with ONLY valid JSON (no markdown fences, no commentary). Schema:
 {
-  "summary": "one sentence",
+  "summary": "one sentence describing what you changed",
   "changes": [
     {
       "file": "relative/path/from/project/root.tsx",
@@ -39,11 +97,14 @@ Respond with ONLY valid JSON (no markdown fences). Schema:
 }
 
 Rules:
-- Include only files that must change.
-- For existing files, "before" MUST match the file content you were given (verbatim).
-- To add a new file: "type": "add", "before": "", "after": "<full content>".
-- Preserve style and structure; minimal edits when possible.
-- If the request is unclear, make the smallest reasonable change and explain in "summary".
+- Include only files that must change. Do NOT touch unrelated files.
+- For existing files, "before" MUST match the file content you were given verbatim.
+- To add a new file: {"type": "add", "before": "", "after": "<full content>"}.
+- To delete a file: {"type": "delete", "before": "<full current content>", "after": ""}.
+- Preserve existing style, imports, and structure. Make minimal edits.
+- If a file you need isn't included in FULL CONTENT but appears in the MANIFEST, ask for it by emitting a "summary" that says what you need — but first try to complete the edit with what you have.
+- If the request is ambiguous, make the smallest reasonable change and explain the interpretation in "summary".
+- NEVER regenerate the whole project. NEVER output conversational text.
 """
 
     def __init__(
@@ -64,9 +125,23 @@ Rules:
         parts.append("## User request\n" + user_message.strip())
         if history_hint.strip():
             parts.append("\n## Recent conversation (compressed)\n" + history_hint.strip())
-        parts.append("\n## Current files\n")
+
+        # (1) Full manifest of every file so the model knows what exists.
+        parts.append("\n## Project manifest (all files)")
+        manifest_lines: list[str] = []
+        for f in files:
+            path = (f.get("path") or "").strip()
+            if not path:
+                continue
+            size = len(f.get("content") or "")
+            manifest_lines.append(f"- {path} ({size} chars)")
+        parts.append("\n".join(manifest_lines) if manifest_lines else "(no files)")
+
+        # (2) Full content for the top-ranked files (relevance + anchors).
+        ranked = _rank_files(files, user_message)
+        parts.append("\n## Full content (most relevant files)")
         count = 0
-        for f in files[:MAX_FILES_IN_PROMPT]:
+        for f in ranked[:MAX_FULL_FILES_IN_PROMPT]:
             path = f.get("path") or ""
             content = f.get("content") or ""
             if len(content) > MAX_PROMPT_CHARS_PER_FILE:
@@ -77,8 +152,9 @@ Rules:
                 )
             parts.append(f"### FILE: {path}\n```\n{content}\n```\n")
             count += 1
-        if len(files) > count:
-            parts.append(f"\n({len(files) - count} more files omitted — do not modify unless required.)\n")
+        remaining = max(0, len(ranked) - count)
+        if remaining:
+            parts.append(f"\n({remaining} more files in manifest but content omitted. Reference them by path if needed.)\n")
         return "\n".join(parts)
 
     def run(

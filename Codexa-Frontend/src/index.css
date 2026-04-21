@@ -395,6 +395,7 @@
   body {
     @apply bg-background text-foreground font-sans antialiased;
     font-family: "Inter", sans-serif;
+    
   }
 
   code,
@@ -671,52 +672,76 @@
     display: none;
   }
 
-  /**
-   * Compact lists (e.g. recent projects): slim track, gradient thumb, no “classic” arrows.
-   */
-  .scrollbar-dropdown {
+  .sidebar-scrollbar {
+    scrollbar-width: none;
+    scrollbar-color: hsl(var(--primary) / 0.95) transparent;
+  }
+
+  .sidebar-scrollbar::-webkit-scrollbar {
+    width: 0;
+  }
+
+  .sidebar-scrollbar::-webkit-scrollbar-track {
+    background: linear-gradient(
+      180deg,
+      transparent 0%,
+      hsl(var(--primary) / 0.05) 18%,
+      hsl(var(--primary) / 0.1) 50%,
+      hsl(var(--primary) / 0.05) 82%,
+      transparent 100%
+    );
+    border-radius: 9999px;
+    opacity: 0;
+  }
+
+  .sidebar-scrollbar::-webkit-scrollbar-thumb {
+    border: 2px solid transparent;
+    border-radius: 9999px;
+    background:
+      linear-gradient(
+        180deg,
+        hsl(var(--primary) / 0.98) 0%,
+        hsl(var(--primary) / 0.82) 45%,
+        hsl(var(--primary) / 0.92) 100%
+      )
+      padding-box;
+    box-shadow:
+      0 0 0 1px hsl(var(--primary) / 0.16),
+      0 0 18px hsl(var(--primary) / 0.28),
+      inset 0 1px 0 hsl(var(--foreground) / 0.14);
+    opacity: 0;
+  }
+
+  .sidebar-scrollbar:hover {
     scrollbar-width: thin;
-    scrollbar-color: hsl(var(--primary) / 0.55) hsl(var(--muted) / 0.12);
   }
 
-  .scrollbar-dropdown::-webkit-scrollbar {
-    width: 6px;
+  .sidebar-scrollbar:hover::-webkit-scrollbar {
+    width: 12px;
   }
 
-  .scrollbar-dropdown::-webkit-scrollbar-track {
-    margin: 8px 2px;
-    background: linear-gradient(
-      180deg,
-      hsl(var(--muted) / 0.08),
-      hsl(var(--muted) / 0.18)
-    );
-    border-radius: 9999px;
-    border: 1px solid hsl(var(--border) / 0.35);
+  .sidebar-scrollbar:hover::-webkit-scrollbar-track {
+    opacity: 1;
   }
 
-  .scrollbar-dropdown::-webkit-scrollbar-thumb {
-    border-radius: 9999px;
-    background: linear-gradient(
-      180deg,
-      hsl(var(--primary) / 0.95),
-      hsl(var(--accent) / 0.82)
-    );
-    border: 1px solid hsl(var(--background) / 0.55);
+  .sidebar-scrollbar:hover::-webkit-scrollbar-thumb {
+    opacity: 1;
+  }
+
+  .sidebar-scrollbar:hover::-webkit-scrollbar-thumb:hover {
+    background:
+      linear-gradient(
+        180deg,
+        hsl(var(--primary)) 0%,
+        hsl(var(--primary) / 0.86) 45%,
+        hsl(var(--primary) / 0.96) 100%
+      )
+      padding-box;
     box-shadow:
-      0 0 0 1px hsl(var(--primary) / 0.2),
-      0 2px 8px hsl(var(--primary) / 0.25);
-    background-clip: padding-box;
-  }
-
-  .scrollbar-dropdown::-webkit-scrollbar-thumb:hover {
-    background: linear-gradient(
-      180deg,
-      hsl(var(--primary)),
-      hsl(var(--accent))
-    );
-    box-shadow:
-      0 0 0 1px hsl(var(--primary) / 0.35),
-      0 3px 12px hsl(var(--primary) / 0.35);
+      0 0 0 1px hsl(var(--primary) / 0.24),
+      0 0 22px hsl(var(--primary) / 0.38),
+      0 0 34px hsl(var(--primary) / 0.18),
+      inset 0 1px 0 hsl(var(--foreground) / 0.18);
   }
 
   /* Text gradient animation */

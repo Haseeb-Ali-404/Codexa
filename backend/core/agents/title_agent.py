@@ -14,14 +14,18 @@ class TitleAgent:
         self._opts = llm_options
 
     def generate_title(self, message: str, max_len: int = 60) -> str:
-        prompt = f"""
-Your name is CODEXA.
-Generate a short title for this message:
+        prompt = f"""Extract the project/app name from this request and generate a title in the format: "AppName - brief tagline".
 
-"{message}"
+Rules:
+- If the user named the app (e.g. "build Luminos"), use that name exactly.
+- If no name given, invent a short catchy brand name for the app type.
+- Tagline: 3-6 words describing what it is (e.g. "a modern SaaS platform", "an e-commerce store").
+- Total title must be under 60 characters.
 
-Respond ONLY in valid JSON like this:
-{{"title": "Your generated title"}}
+User request: "{message}"
+
+Respond ONLY in valid JSON:
+{{"title": "AppName - brief tagline"}}
 """
         messages = [ChatMessage(role="user", content=prompt)]
         try:

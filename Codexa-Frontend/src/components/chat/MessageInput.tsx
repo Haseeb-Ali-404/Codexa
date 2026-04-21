@@ -489,7 +489,7 @@ export function MessageInput({
                     >
                       <FileText className="h-4 w-4 text-muted-foreground sm:h-5 sm:w-5" />
                       <span className="max-w-[2.75rem] truncate text-[8px] text-muted-foreground sm:max-w-[3.25rem] sm:text-[9px]">
-                        {a.file.name.split(".").pop()}
+                        {a.file.name?.split(".")?.pop() ?? ""}
                       </span>
                     </div>
                   )}

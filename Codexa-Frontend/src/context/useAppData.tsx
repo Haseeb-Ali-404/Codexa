@@ -26,6 +26,8 @@ export interface CodeFileDiff {
   before: string;
   after: string;
   unified_diff?: string;
+  /** Client-side timestamp (ms) of when the diff arrived. Used for entry animations. */
+  receivedAt?: number;
 }
 
 /* ----------------------------------------
@@ -49,6 +51,10 @@ interface AppDataContextType {
   mergeCodeDiffs: (changes: CodeFileDiff[]) => void;
   setCodeDiffForFile: (path: string, diff: CodeFileDiff | null) => void;
   clearCodeDiffs: () => void;
+  /** Ordered list of paths most recently edited (newest first), for a "recent changes" strip. */
+  recentEditedPaths: string[];
+  /** Path of the single most-recently edited file, or null. */
+  latestEditedPath: string | null;
 
   fetchUserChats: () => Promise<void>;
   fetchUserProjects: () => Promise<void>;
@@ -81,15 +87,22 @@ export const AppDataProvider = ({
   const [codeDiffsByPath, setCodeDiffsByPath] = useState<
     Record<string, CodeFileDiff>
   >({});
+  const [recentEditedPaths, setRecentEditedPaths] = useState<string[]>([]);
 
   const mergeCodeDiffs = useCallback((changes: CodeFileDiff[]) => {
     if (!changes?.length) return;
+    const now = Date.now();
     setCodeDiffsByPath((prev) => {
       const next = { ...prev };
       for (const c of changes) {
-        if (c?.file) next[c.file] = c;
+        if (c?.file) next[c.file] = { ...c, receivedAt: now };
       }
       return next;
+    });
+    setRecentEditedPaths((prev) => {
+      const incoming = changes.map((c) => c?.file).filter(Boolean) as string[];
+      const merged = [...incoming, ...prev.filter((p) => !incoming.includes(p))];
+      return merged.slice(0, 20);
     });
   }, []);
 
@@ -97,7 +110,7 @@ export const AppDataProvider = ({
     (path: string, diff: CodeFileDiff | null) => {
       setCodeDiffsByPath((prev) => {
         const next = { ...prev };
-        if (diff) next[path] = diff;
+        if (diff) next[path] = { ...diff, receivedAt: Date.now() };
         else delete next[path];
         return next;
       });
@@ -105,7 +118,12 @@ export const AppDataProvider = ({
     [],
   );
 
-  const clearCodeDiffs = useCallback(() => setCodeDiffsByPath({}), []);
+  const clearCodeDiffs = useCallback(() => {
+    setCodeDiffsByPath({});
+    setRecentEditedPaths([]);
+  }, []);
+
+  const latestEditedPath = recentEditedPaths[0] ?? null;
 
   /* ----------------------------------------
      Fetch user chats
@@ -161,13 +179,15 @@ export const AppDataProvider = ({
       const data = await res.json();
 
       if (data.ok) {
-        const enrichedFiles: ProjectFile[] = data.files.map((file: any) => ({
-          _id: file._id,
-          path: file.path,
-          content: file.content,
-          language: detectLanguage(file.path),
-          name: file.path.split("/").pop(),
-        }));
+        const enrichedFiles: ProjectFile[] = data.files
+          .filter((file: any) => file.path != null)
+          .map((file: any) => ({
+            _id: file._id,
+            path: file.path,
+            content: file.content ?? "",
+            language: detectLanguage(file.path),
+            name: file.path.split("/").pop() ?? file.path,
+          }));
 
         setProjectFiles(enrichedFiles);
 
@@ -212,6 +232,8 @@ export const AppDataProvider = ({
         mergeCodeDiffs,
         setCodeDiffForFile,
         clearCodeDiffs,
+        recentEditedPaths,
+        latestEditedPath,
       }}
     >
       {children}

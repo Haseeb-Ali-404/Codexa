@@ -1,4 +1,5 @@
-export function detectLanguage(path: string): string {
+export function detectLanguage(path: string | null | undefined): string {
+  if (!path) return "plaintext";
   const ext = path.split(".").pop()?.toLowerCase();
 
   switch (ext) {

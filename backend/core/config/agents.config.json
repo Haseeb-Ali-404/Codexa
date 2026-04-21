@@ -3,20 +3,32 @@
     "planner": {
       "provider": "gemini",
       "model": "gemini-2.5-pro",
-      "temperature": 0.1,
-      "max_tokens": 4096,
-      "timeout_seconds": 500,
+      "temperature": 0.2,
+      "max_tokens": 16000,
+      "timeout_seconds": 120,
       "fallbacks": [
-        { "provider": "openai", "model": "gpt-4o-mini" }
+        { "provider": "openai", "model": "gpt-4o", "max_tokens": 4096 }
       ]
     },
     "developer": {
       "provider": "gemini",
       "model": "gemini-2.5-pro",
       "temperature": 0.1,
-      "max_tokens": 500000,
-      "timeout_seconds": 900,
-      "fallbacks": []
+      "max_tokens": 65536,
+      "timeout_seconds": 1200,
+      "fallbacks": [
+        { "provider": "openai", "model": "gpt-4o", "max_tokens": 128000 }
+      ]
+    },
+    "orchestrator": {
+      "provider": "gemini",
+      "model": "gemini-2.5-pro",
+      "temperature": 0.1,
+      "max_tokens": 65536,
+      "timeout_seconds": 600,
+      "fallbacks": [
+        { "provider": "openai", "model": "gpt-4o", "max_tokens": 32000 }
+      ]
     },
     "debugger": {
       "provider": "gemini",
@@ -25,59 +37,71 @@
     },
     "classifier": {
       "provider": "gemini",
-      "model": "gemini-2.5-pro",
+      "model": "gemini-2.5-flash",
       "temperature": 0.1,
-      "max_tokens": 2084,
-      "timeout_seconds": 500,
+      "max_tokens": 256,
+      "timeout_seconds": 10,
       "fallbacks": [
-        { "provider": "openai", "model": "gpt-4o-mini" }
+        { "provider": "openai", "model": "gpt-4o-mini", "max_tokens": 128 }
       ]
     },
     "integrator": {
       "provider": "gemini",
-      "model": "gemini-2.5-flash-lite",
-      "timeout_seconds": 300,
+      "model": "gemini-2.5-flash",
+      "timeout_seconds": 120,
       "fallbacks": []
     },
     "architect": {
       "provider": "gemini",
       "model": "gemini-2.5-pro",
-      "temperature": 0.2,
-      "max_tokens": 4096,
+      "temperature": 0.3,
+      "max_tokens": 16000,
       "timeout_seconds": 300,
       "fallbacks": [
-        { "provider": "anthropic", "model": "claude-3-5-sonnet-20241022" }
+        { "provider": "anthropic", "model": "claude-sonnet-4-6" },
+        { "provider": "openai", "model": "gpt-4o", "max_tokens": 4096 }
       ]
     },
     "chat": {
       "provider": "gemini",
-      "model": "gemini-2.5-pro",
+      "model": "gemini-2.5-flash",
       "temperature": 0.7,
-      "max_tokens": 4096,
-      "timeout_seconds": 300,
+      "max_tokens": 8192,
+      "timeout_seconds": 30,
       "fallbacks": [
-        { "provider": "openai", "model": "gpt-4o-mini" }
+        { "provider": "openai", "model": "gpt-4o-mini", "max_tokens": 1024 }
       ]
     },
     "title": {
       "provider": "gemini",
-      "model": "gemini-2.5-pro",
+      "model": "gemini-2.5-flash",
       "temperature": 0.4,
-      "max_tokens": 256,
-      "timeout_seconds": 300,
+      "max_tokens": 64,
+      "timeout_seconds": 8,
       "fallbacks": [
-        { "provider": "openai", "model": "gpt-4o-mini" }
+        { "provider": "openai", "model": "gpt-4o-mini", "max_tokens": 32 }
       ]
     },
     "edit": {
       "provider": "gemini",
       "model": "gemini-2.5-pro",
       "temperature": 0.15,
-      "max_tokens": 32768,
-      "timeout_seconds": 300,
+      "max_tokens": 65536,
+      "timeout_seconds": 600,
       "fallbacks": [
         { "provider": "openai", "model": "gpt-4o" }
       ]
     }
+  },
+   "planner_stages": {
+    "stage_1": { "provider": "openai", "model": "gpt-4o", "temperature": 0.3, "max_tokens": 2000 },
+    "stage_2": { "provider": "gemini", "model": "gemini-2.5-pro", "temperature": 0.2, "max_tokens": 4000 },
+    "stage_3": { "provider": "gemini", "model": "gemini-2.5-pro", "temperature": 0.1, "max_tokens": 4000 },
+    "stage_4": { "provider": "gemini", "model": "gemini-2.5-pro", "temperature": 0.1, "max_tokens": 3000 },
+    "stage_5": { "provider": "openai", "model": "gpt-4o", "temperature": 0.3, "max_tokens": 2000 },
+    "validator_3": { "provider": "openai", "model": "gpt-4o-mini", "temperature": 0.0, "max_tokens": 500 },
+    "validator_4": { "provider": "openai", "model": "gpt-4o", "temperature": 0.0, "max_tokens": 500 },
+    "validator_5": { "provider": "openai", "model": "gpt-4o", "temperature": 0.0, "max_tokens": 500 }
   }
+
 }

@@ -2,6 +2,7 @@ export function buildFileTree(files: any[]) {
   const root: any[] = [];
 
   for (const file of files) {
+    if (!file.path) continue;
     const parts = file.path.split("/");
     let current = root;
 
