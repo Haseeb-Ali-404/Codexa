@@ -180,3 +180,37 @@ def get_user_projects(user_id: str):
         projects.append(p)
 
     return projects
+
+
+def update_project_title(project_id: str, user_id: str, title: str) -> bool:
+    try:
+        oid = ObjectId(project_id)
+    except Exception:
+        return False
+    title = (title or "").strip()
+    if not title:
+        return False
+    res = projects_col.update_one(
+        {"_id": oid, "user_id": user_id},
+        {"$set": {"title": title, "updated_at": datetime.utcnow()}},
+    )
+    return res.matched_count > 0
+
+
+def delete_project_cascade(project_id: str, user_id: str) -> bool:
+    """
+    Remove project and its associated files.
+    """
+    try:
+        oid = ObjectId(project_id)
+    except Exception:
+        return False
+    project = projects_col.find_one({"_id": oid})
+    if not project or project.get("user_id") != user_id:
+        return False
+
+    # Delete associated files
+    files_col.delete_many({"project_id": oid})
+    # Delete the project
+    projects_col.delete_one({"_id": oid})
+    return True

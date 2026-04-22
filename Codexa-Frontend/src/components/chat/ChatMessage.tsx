@@ -17,15 +17,25 @@ import {
   rehypeSearchHighlight,
   escapeRegExp,
 } from "@/lib/rehypeSearchHighlight";
+import { PlannerStageMessage } from "./PlannerStageMessage";
+import type { PlannerPipelineState } from "./PlannerStageMessage";
+import { GeneratorMessage } from "./GeneratorMessage";
+import type { GeneratorProgress } from "./GeneratorMessage";
+import { ValidatorMessage } from "./ValidatorMessage";
+import { ProjectExplanationCard } from "./ProjectExplanationCard";
 
 interface ChatMessageProps {
   message: {
     id: string;
     role: "user" | "assistant";
     title?: string;
-    agent: "developer" | "debugger" | "planner" |"chat" | string | null;
+    agent: "developer" | "debugger" | "planner" | "generator" | "validator" | "architect" | "chat" | string | null;
     content: string;
     createdAt?: string | number;
+    pipeline?: PlannerPipelineState;
+    generatorProgress?: GeneratorProgress;
+    validationPassed?: boolean | null;
+    architectureData?: Record<string, unknown>;
     code?: {
       language: string;
       content: string;
@@ -96,7 +106,7 @@ export function ChatMessage({ message, index, searchHighlight }: ChatMessageProp
     return { language, content: cleaned };
   }
 
-  // Parse planner + developer content
+  // Parse planner + developer + architect content
   useEffect(() => {
     if (message.agent === "planner") {
       try {
@@ -106,6 +116,12 @@ export function ChatMessage({ message, index, searchHighlight }: ChatMessageProp
       } catch {
         console.error("Invalid planner JSON:", message.content);
       }
+    }
+
+    if (message.agent === "architect" && message.architectureData) {
+      const d = message.architectureData;
+      const t = (d.project_name || d.title || d.name || message.title || null) as string | null;
+      setTitle(t);
     }
 
     if (message.agent === "developer") {
@@ -211,14 +227,21 @@ export function ChatMessage({ message, index, searchHighlight }: ChatMessageProp
           )}
         >
           {/* Message Rendering */}
-          {message.agent === "planner" ? (
+          {message.pipeline ? (
+            <PlannerStageMessage pipeline={message.pipeline} />
+          ) : message.agent === "generator" ? (
+            <GeneratorMessage progress={message.generatorProgress} />
+          ) : message.agent === "validator" ? (
+            <ValidatorMessage passed={message.validationPassed} architectureData={message.architectureData} />
+          ) : message.agent === "architect" && message.architectureData ? (
+            <ProjectExplanationCard data={message.architectureData} projectTitle={title || undefined} />
+          ) : message.agent === "planner" ? (
             <div className="space-y-2 text-sm leading-relaxed">
               {title && (
                 <p className={cn("font-semibold", isUser ? "text-primary-foreground" : "text-foreground")}>
                   {renderHighlightedPlain(title, searchHighlight, isUser)}
                 </p>
               )}
-
               {planSteps.map((step, idx) => (
                 <div key={idx} className={cn(isUser ? "text-primary-foreground/90" : "text-foreground")}>
                   <ReactMarkdown rehypePlugins={[...searchRehypePlugins]}>

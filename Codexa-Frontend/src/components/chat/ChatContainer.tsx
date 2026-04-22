@@ -36,7 +36,7 @@ interface Message {
   role: "user" | "assistant";
   content: string;
   title?: string;
-  agent?: "developer" | "debugger" | "planner" | "Conversation" | string | null;
+  agent?: "developer" | "debugger" | "planner" | "generator" | "validator" | "architect" | "Conversation" | string | null;
   createdAt?: string | number;
   code?: {
     language: string;
@@ -44,6 +44,9 @@ interface Message {
   };
   attachments?: MessageAttachmentView[];
   pipeline?: PlannerPipelineState;
+  generatorProgress?: { received: number; total: number; done: boolean };
+  validationPassed?: boolean | null;
+  architectureData?: Record<string, unknown>;
 }
 
 interface Props {
@@ -105,6 +108,12 @@ export function ChatContainer({ onCodeGenerated, onCodeEdited }: Props) {
   const streamingMessageIdRef = useRef<string | null>(null);
   /** ID of the live planner stage message bubble */
   const plannerMsgIdRef = useRef<string | null>(null);
+  /** ID of the live generator bubble */
+  const generatorMsgIdRef = useRef<string | null>(null);
+  /** ID of the live validator bubble */
+  const validatorMsgIdRef = useRef<string | null>(null);
+  /** Accumulated planner_delta text */
+  const plannerTextRef = useRef<string>("");
   /** Smooth quick “typing”: split network chunks into small rAF batches */
   const streamCharQueueRef = useRef<string[]>([]);
   const streamRafRef = useRef<number | null>(null);
@@ -134,6 +143,10 @@ export function ChatContainer({ onCodeGenerated, onCodeEdited }: Props) {
     }
     streamCharQueueRef.current = [];
     streamingMessageIdRef.current = null;
+    plannerMsgIdRef.current = null;
+    generatorMsgIdRef.current = null;
+    validatorMsgIdRef.current = null;
+    plannerTextRef.current = "";
     const w = chatWsRef.current;
     chatWsRef.current = null;
     if (w) {
@@ -282,21 +295,36 @@ export function ChatContainer({ onCodeGenerated, onCodeEdited }: Props) {
         const data = await res.json();
 
         if (data.ok && Array.isArray(data.messages)) {
-          const mapped = data.messages.map((msg: any) => ({
-            id: msg._id,
-            role: msg.role,
-            content: msg.content,
-            agent: msg.agent,
-            createdAt:
-              parseMessageDate(
-                msg.created_at ||
-                  msg.createdAt ||
-                  msg.timestamp ||
-                  msg.created ||
-                  null,
-              )?.toISOString() || null,
-            pipeline: msg.pipeline || undefined,
-          }));
+          const mapped = data.messages.map((msg: any) => {
+            // Parse architectureData from content for stored architect messages
+            let architectureData: Record<string, unknown> | undefined;
+            let validationPassed: boolean | null | undefined;
+
+            if (msg.agent === "architect" && msg.content) {
+              try { architectureData = JSON.parse(msg.content); } catch {}
+            }
+            if (msg.agent === "validator") {
+              validationPassed = msg.validation_passed ?? msg.validationPassed ?? null;
+            }
+
+            return {
+              id: msg._id,
+              role: msg.role,
+              content: msg.content,
+              agent: msg.agent,
+              createdAt:
+                parseMessageDate(
+                  msg.created_at ||
+                    msg.createdAt ||
+                    msg.timestamp ||
+                    msg.created ||
+                    null,
+                )?.toISOString() || null,
+              pipeline: msg.pipeline || undefined,
+              architectureData,
+              validationPassed,
+            };
+          });
 
           setMessages(mapped);
           stickToBottomRef.current = true;
@@ -807,25 +835,104 @@ export function ChatContainer({ onCodeGenerated, onCodeEdited }: Props) {
         addMessage("assistant", JSON.stringify(data.data, null, 2), "planner");
       }
 
-      // 💻 DEVELOPER START
+      // Planner streaming text
+      if (data.type === "planner_delta" && plannerMsgIdRef.current) {
+        plannerTextRef.current += (data.text as string) || "";
+        const txt = plannerTextRef.current;
+        setMessages(prev => prev.map(m =>
+          m.id === plannerMsgIdRef.current && m.pipeline
+            ? { ...m, pipeline: { ...m.pipeline, planText: txt } }
+            : m
+        ));
+      }
+
+      // Planner result (plan steps)
+      if (data.type === "planner_result" && plannerMsgIdRef.current) {
+        const plan = data.data as { title?: string; steps?: string[] };
+        const result = { title: plan?.title || "", steps: plan?.steps || plan?.plan as string[] || [] };
+        setMessages(prev => prev.map(m =>
+          m.id === plannerMsgIdRef.current && m.pipeline
+            ? { ...m, pipeline: { ...m.pipeline, planText: undefined, planResult: result } }
+            : m
+        ));
+      }
+
+      // 💻 DEVELOPER START — create generator bubble
       if (data.type === "developer_start") {
-        addMessage("assistant", "Generating project code…", "developer");
+        const msgId = `gen-${Date.now()}`;
+        generatorMsgIdRef.current = msgId;
+        setIsLoading(false);
+        setMessages(prev => [...prev, {
+          id: msgId,
+          role: "assistant",
+          content: "",
+          agent: "generator",
+          createdAt: new Date().toISOString(),
+          generatorProgress: { received: 0, total: 0, done: false },
+        }]);
       }
 
-      // 💻 DEVELOPER RESULT
-      if (data.type === "developer_result") {
-        addMessage("assistant", "Project code generated successfully.", "developer");
+      // 💻 DEVELOPER RESULT CHUNK — update progress
+      if (data.type === "developer_result_chunk" && generatorMsgIdRef.current) {
+        const received = (data.chunk_index as number) + 1;
+        const total = data.total_chunks as number;
+        setMessages(prev => prev.map(m =>
+          m.id === generatorMsgIdRef.current
+            ? { ...m, generatorProgress: { received, total, done: false } }
+            : m
+        ));
       }
 
-      // 🧪 DEBUGGER START
-      if (data.type === "debugger_start") {
-        addMessage("assistant", "Validating project integrity…", "debugger");
+      // 💻 DEVELOPER RESULT DONE — mark complete
+      if (data.type === "developer_result_done" && generatorMsgIdRef.current) {
+        setMessages(prev => prev.map(m =>
+          m.id === generatorMsgIdRef.current
+            ? { ...m, generatorProgress: { ...m.generatorProgress!, done: true } }
+            : m
+        ));
+        generatorMsgIdRef.current = null;
       }
 
-      // 🧪 DEBUGGER RESULT
-      if (data.type === "debugger_result") {
-        const valid = data.data;
-        addMessage("assistant", valid ? "✅ Validation passed — project is ready." : "⚠️ Validation found issues — attempting fixes.", "debugger");
+      // 🧪 DEBUGGER + ARCHITECT START — create validator bubble
+      if (data.type === "debugger_start" || data.type === "architect_start") {
+        if (!validatorMsgIdRef.current) {
+          const msgId = `val-${Date.now()}`;
+          validatorMsgIdRef.current = msgId;
+          setIsLoading(false);
+          setMessages(prev => [...prev, {
+            id: msgId,
+            role: "assistant",
+            content: "",
+            agent: "validator",
+            createdAt: new Date().toISOString(),
+            validationPassed: null,
+          }]);
+        }
+      }
+
+      // 🧪 ARCHITECT RESULT — show project explanation card
+      if (data.type === "architect_result") {
+        const arch = data.data as Record<string, unknown>;
+        const explainId = `arch-${Date.now()}`;
+        setMessages(prev => [...prev, {
+          id: explainId,
+          role: "assistant",
+          content: "",
+          agent: "architect",
+          createdAt: new Date().toISOString(),
+          architectureData: arch,
+        }]);
+      }
+
+      // 🧪 DEBUGGER RESULT — update validator bubble
+      if (data.type === "debugger_result" && validatorMsgIdRef.current) {
+        const valid = data.data as boolean;
+        setMessages(prev => prev.map(m =>
+          m.id === validatorMsgIdRef.current
+            ? { ...m, validationPassed: valid }
+            : m
+        ));
+        validatorMsgIdRef.current = null;
       }
 
       // ✅ DONE

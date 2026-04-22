@@ -4,7 +4,6 @@ import {
   Check,
   X,
   Download,
-  Settings2,
   Braces,
   FolderTree,
   Folder,
@@ -12,7 +11,6 @@ import {
   Pencil,
   Save,
   ChevronDown,
-  Sparkles,
   Plus,
   Minus,
 } from "lucide-react";
@@ -138,6 +136,189 @@ declare const Blob: any;
 declare const URLSearchParams: any;
 `;
 
+type CodeThemeSnapshot = {
+  isLight: boolean;
+  primary: string;
+  accent: string;
+  background: string;
+  card: string;
+  secondary: string;
+  border: string;
+  foreground: string;
+  mutedForeground: string;
+  destructive: string;
+  prismTheme: any;
+  monacoThemeName: string;
+};
+
+const codeToolbarButtonClass = cn(
+  "inline-flex shrink-0 items-center gap-1 rounded-lg border px-2 py-1.5 text-[10px] font-medium transition-all duration-200",
+  "border-[hsl(var(--border)/0.7)] bg-[hsl(var(--background)/0.78)] text-[hsl(var(--muted-foreground))]",
+  "hover:border-[hsl(var(--primary)/0.28)] hover:bg-[hsl(var(--primary)/0.08)] hover:text-[hsl(var(--foreground))]",
+  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--primary)/0.32)]",
+);
+
+const codeTopBarButtonClass = cn(
+  "inline-flex items-center justify-center rounded-xl border border-[hsl(var(--border)/0.72)]",
+  "bg-[hsl(var(--background)/0.78)] text-[hsl(var(--muted-foreground))]",
+  "transition-all duration-200 hover:border-[hsl(var(--primary)/0.28)] hover:bg-[hsl(var(--primary)/0.08)] hover:text-[hsl(var(--foreground))]",
+  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--primary)/0.3)]",
+);
+
+const readResolvedTriplet = (
+  styles: CSSStyleDeclaration,
+  name: string,
+  fallback: string,
+  fallbackVar?: string,
+) => {
+  let value = styles.getPropertyValue(name).trim();
+
+  if ((!value || value.includes("var(")) && fallbackVar) {
+    const next = styles.getPropertyValue(fallbackVar).trim();
+    if (next && !next.includes("var(")) value = next;
+  }
+
+  return value || fallback;
+};
+
+const parseHslTriplet = (value: string) => {
+  const cleaned = value.replace(/,/g, " ").replace(/\//g, " ").trim();
+  const parts = cleaned.split(/\s+/).filter(Boolean);
+
+  if (parts.length < 3) return null;
+
+  const h = Number.parseFloat(parts[0]);
+  const s = Number.parseFloat(parts[1].replace("%", ""));
+  const l = Number.parseFloat(parts[2].replace("%", ""));
+
+  if ([h, s, l].some((part) => Number.isNaN(part))) return null;
+
+  return {
+    h: ((h % 360) + 360) % 360,
+    s: Math.min(Math.max(s / 100, 0), 1),
+    l: Math.min(Math.max(l / 100, 0), 1),
+  };
+};
+
+const toHexChannel = (value: number) =>
+  Math.round(Math.min(Math.max(value, 0), 255))
+    .toString(16)
+    .padStart(2, "0");
+
+const hslTripletToHex = (value: string, alpha = 1) => {
+  const parsed = parseHslTriplet(value);
+
+  if (!parsed) {
+    return alpha < 1 ? "#00000000" : "#000000";
+  }
+
+  const { h, s, l } = parsed;
+  const hue = h / 360;
+  let r = l;
+  let g = l;
+  let b = l;
+
+  if (s !== 0) {
+    const hueToRgb = (p: number, q: number, t: number) => {
+      let next = t;
+      if (next < 0) next += 1;
+      if (next > 1) next -= 1;
+      if (next < 1 / 6) return p + (q - p) * 6 * next;
+      if (next < 1 / 2) return q;
+      if (next < 2 / 3) return p + (q - p) * (2 / 3 - next) * 6;
+      return p;
+    };
+
+    const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+    const p = 2 * l - q;
+    r = hueToRgb(p, q, hue + 1 / 3);
+    g = hueToRgb(p, q, hue);
+    b = hueToRgb(p, q, hue - 1 / 3);
+  }
+
+  const hex = `#${toHexChannel(r * 255)}${toHexChannel(g * 255)}${toHexChannel(b * 255)}`;
+
+  if (alpha >= 1) return hex;
+
+  return `${hex}${toHexChannel(alpha * 255)}`;
+};
+
+const readCodeThemeSnapshot = (): CodeThemeSnapshot => {
+  if (typeof window === "undefined") {
+    return {
+      isLight: false,
+      primary: "187 100% 42%",
+      accent: "262 80% 60%",
+      background: "222 47% 6%",
+      card: "222 47% 8%",
+      secondary: "222 30% 14%",
+      border: "222 30% 18%",
+      foreground: "210 40% 98%",
+      mutedForeground: "215 20% 55%",
+      destructive: "0 84% 60%",
+      prismTheme: themes.nightOwl,
+      monacoThemeName: "codexa-dark",
+    };
+  }
+
+  const root = document.documentElement;
+  const styles = getComputedStyle(root);
+  const isLight = root.classList.contains("light");
+  const primary = readResolvedTriplet(
+    styles,
+    "--primary",
+    isLight ? "187 100% 35%" : "187 100% 42%",
+    "--custom-primary",
+  );
+  const prismThemeMap = themes as Record<string, any>;
+
+  return {
+    isLight,
+    primary,
+    accent: readResolvedTriplet(styles, "--accent", primary),
+    background: readResolvedTriplet(
+      styles,
+      "--background",
+      isLight ? "210 40% 98%" : "222 47% 6%",
+    ),
+    card: readResolvedTriplet(
+      styles,
+      "--card",
+      isLight ? "0 0% 100%" : "222 47% 8%",
+    ),
+    secondary: readResolvedTriplet(
+      styles,
+      "--secondary",
+      isLight ? "210 40% 96%" : "222 30% 14%",
+    ),
+    border: readResolvedTriplet(
+      styles,
+      "--border",
+      isLight ? "214 32% 91%" : "222 30% 18%",
+    ),
+    foreground: readResolvedTriplet(
+      styles,
+      "--foreground",
+      isLight ? "222 47% 11%" : "210 40% 98%",
+    ),
+    mutedForeground: readResolvedTriplet(
+      styles,
+      "--muted-foreground",
+      isLight ? "215 16% 47%" : "215 20% 55%",
+    ),
+    destructive: readResolvedTriplet(styles, "--destructive", "0 84% 60%"),
+    prismTheme: isLight
+      ? prismThemeMap.github ??
+        prismThemeMap.duotoneLight ??
+        prismThemeMap.nightOwlLight ??
+        prismThemeMap.nightOwl
+      : prismThemeMap.nightOwl ??
+        prismThemeMap.oceanicNext ??
+        prismThemeMap.dracula,
+    monacoThemeName: isLight ? "codexa-light" : "codexa-dark",
+  };
+};
+
 /* ----------------------------------------
    Tree Types (STRICT & SAFE)
 ---------------------------------------- */
@@ -235,15 +416,136 @@ export function CodePanel({
   // ✅ NEW STATES
   const [isEditing, setIsEditing] = useState(false);
   const [editedContent, setEditedContent] = useState("");
+  const [themeNonce, setThemeNonce] = useState(0);
 
   const codeScrollRef = useRef<HTMLDivElement>(null);
+  const monacoRef = useRef<any>(null);
   const stickToBottomRef = useRef(true);
   const [showJumpToBottom, setShowJumpToBottom] = useState(false);
+  const codeTheme = useMemo(() => readCodeThemeSnapshot(), [themeNonce]);
 
   const activeFile = selectedFile;
   const activeDiff = activeFile
     ? codeDiffsByPath[activeFile.path] ?? null
     : null;
+
+  const applyMonacoTheme = (monaco: any) => {
+    monacoRef.current = monaco;
+    monaco.editor.defineTheme(codeTheme.monacoThemeName, {
+      base: codeTheme.isLight ? "vs" : "vs-dark",
+      inherit: true,
+      rules: [
+        {
+          token: "comment",
+          foreground: hslTripletToHex(codeTheme.mutedForeground).replace("#", ""),
+          fontStyle: "italic",
+        },
+        {
+          token: "keyword",
+          foreground: hslTripletToHex(codeTheme.primary).replace("#", ""),
+        },
+        {
+          token: "string",
+          foreground: hslTripletToHex(codeTheme.accent).replace("#", ""),
+        },
+        {
+          token: "number",
+          foreground: hslTripletToHex(codeTheme.primary).replace("#", ""),
+        },
+        {
+          token: "type.identifier",
+          foreground: hslTripletToHex(codeTheme.foreground).replace("#", ""),
+        },
+      ],
+      colors: {
+        "editor.background": hslTripletToHex(
+          codeTheme.background,
+          codeTheme.isLight ? 0.9 : 0.94,
+        ),
+        "editor.foreground": hslTripletToHex(codeTheme.foreground),
+        "editorLineNumber.foreground": hslTripletToHex(
+          codeTheme.mutedForeground,
+          codeTheme.isLight ? 0.72 : 0.84,
+        ),
+        "editorLineNumber.activeForeground": hslTripletToHex(
+          codeTheme.foreground,
+          0.96,
+        ),
+        "editorCursor.foreground": hslTripletToHex(codeTheme.primary),
+        "editor.selectionBackground": hslTripletToHex(
+          codeTheme.primary,
+          codeTheme.isLight ? 0.18 : 0.2,
+        ),
+        "editor.inactiveSelectionBackground": hslTripletToHex(
+          codeTheme.primary,
+          codeTheme.isLight ? 0.1 : 0.12,
+        ),
+        "editor.lineHighlightBackground": hslTripletToHex(
+          codeTheme.primary,
+          codeTheme.isLight ? 0.06 : 0.09,
+        ),
+        "editor.lineHighlightBorder": hslTripletToHex(
+          codeTheme.primary,
+          codeTheme.isLight ? 0.12 : 0.16,
+        ),
+        "editorGutter.background": hslTripletToHex(
+          codeTheme.background,
+          codeTheme.isLight ? 0.82 : 0.92,
+        ),
+        "editorIndentGuide.background1": hslTripletToHex(
+          codeTheme.border,
+          codeTheme.isLight ? 0.4 : 0.5,
+        ),
+        "editorIndentGuide.activeBackground1": hslTripletToHex(
+          codeTheme.primary,
+          codeTheme.isLight ? 0.32 : 0.4,
+        ),
+        "editorWhitespace.foreground": hslTripletToHex(
+          codeTheme.border,
+          codeTheme.isLight ? 0.4 : 0.5,
+        ),
+        "editorBracketMatch.border": hslTripletToHex(
+          codeTheme.accent,
+          codeTheme.isLight ? 0.38 : 0.45,
+        ),
+        "editorBracketMatch.background": hslTripletToHex(
+          codeTheme.accent,
+          codeTheme.isLight ? 0.08 : 0.12,
+        ),
+        "editorWidget.background": hslTripletToHex(
+          codeTheme.card,
+          codeTheme.isLight ? 0.98 : 0.96,
+        ),
+        "editorWidget.border": hslTripletToHex(
+          codeTheme.border,
+          codeTheme.isLight ? 0.68 : 0.78,
+        ),
+        "editorHoverWidget.background": hslTripletToHex(codeTheme.card, 0.98),
+        "editorHoverWidget.border": hslTripletToHex(
+          codeTheme.border,
+          codeTheme.isLight ? 0.68 : 0.78,
+        ),
+        "editorSuggestWidget.background": hslTripletToHex(codeTheme.card, 0.98),
+        "editorSuggestWidget.border": hslTripletToHex(
+          codeTheme.border,
+          codeTheme.isLight ? 0.68 : 0.78,
+        ),
+        "editorSuggestWidget.selectedBackground": hslTripletToHex(
+          codeTheme.primary,
+          codeTheme.isLight ? 0.1 : 0.14,
+        ),
+        "diffEditor.insertedTextBackground": hslTripletToHex(
+          "142 72% 45%",
+          codeTheme.isLight ? 0.12 : 0.18,
+        ),
+        "diffEditor.removedTextBackground": hslTripletToHex(
+          codeTheme.destructive,
+          codeTheme.isLight ? 0.1 : 0.16,
+        ),
+      },
+    });
+    monaco.editor.setTheme(codeTheme.monacoThemeName);
+  };
 
   // Diff stats (lines added / removed) — computed cheaply from before/after.
   const diffStats = useMemo(() => {
@@ -274,6 +576,26 @@ export function CodePanel({
     const t = setTimeout(() => setFreshNonce((n) => n + 1), remaining + 50);
     return () => clearTimeout(t);
   }, [activeDiff?.receivedAt]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const root = document.documentElement;
+    const syncTheme = () => setThemeNonce((nonce) => nonce + 1);
+    const observer = new MutationObserver(syncTheme);
+
+    observer.observe(root, {
+      attributes: true,
+      attributeFilter: ["class", "style"],
+    });
+
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    if (!monacoRef.current) return;
+    applyMonacoTheme(monacoRef.current);
+  }, [codeTheme]);
 
   // When a brand-new edit arrives for a file we aren't currently viewing,
   // jump to it — same feel as Claude Code's live cursor follow.
@@ -346,7 +668,6 @@ export function CodePanel({
     a.click();
     URL.revokeObjectURL(url);
   };
-  console.log(singleProjectId, activeFile?._id || "");
   
   // ✅ SAVE FUNCTION
   const handleSave = async () => {
@@ -438,42 +759,98 @@ export function CodePanel({
      Render Tree
   ---------------------------------------- */
   const renderTree = (node: FolderNode, depth = 0) => {
-    return Object.entries(node.children).map(([name, child]) => (
-      <div key={name} style={{ paddingLeft: depth * 14 }}>
-        <div
-          onClick={() => {
-            if (child.type === "file") {
-              setSelectedFile(child.file);
-              setShowFolderView(false);
-              setIsEditing(false); // reset edit mode
-            }
-          }}
-          className="flex items-center gap-2 py-1 text-sm rounded-md cursor-pointer
-                     text-muted-foreground hover:text-foreground
-                     hover:bg-secondary/40 transition"
-        >
-          {child.type === "folder" ? (
-            <Folder className="w-4 h-4 text-primary" />
-          ) : (
-            <FileIcon className="w-4 h-4 text-muted-foreground" />
-          )}
-          <span className="font-medium">{name}</span>
-        </div>
+    return Object.entries(node.children)
+      .sort(([nameA, a], [nameB, b]) => {
+        if (a.type !== b.type) return a.type === "folder" ? -1 : 1;
+        return nameA.localeCompare(nameB);
+      })
+      .map(([name, child]) => {
+      const isFile = child.type === "file";
+      const isSelected = isFile && activeFile?.path === child.file.path;
 
-        {child.type === "folder" && renderTree(child, depth + 1)}
-      </div>
-    ));
+      return (
+        <div
+          key={isFile ? child.file.path : `${depth}-${name}`}
+          className="relative"
+          style={{ paddingLeft: depth * 14 }}
+        >
+          <div
+            onClick={() => {
+              if (child.type === "file") {
+                setSelectedFile(child.file);
+                setShowFolderView(false);
+                setIsEditing(false);
+              }
+            }}
+            className={cn(
+              "group/tree relative flex h-8 items-center gap-2 rounded-lg border border-transparent px-2 text-[12px] transition-all duration-150",
+              isSelected
+                ? "border-[hsl(var(--primary)/0.36)] bg-[linear-gradient(90deg,hsl(var(--primary)/0.2),hsl(var(--primary)/0.08))] text-[hsl(var(--foreground))] shadow-[inset_2px_0_0_hsl(var(--primary))]"
+                : "text-[hsl(var(--foreground)/0.84)] hover:border-[hsl(var(--border)/0.72)] hover:bg-[hsl(var(--foreground)/0.065)] hover:text-[hsl(var(--foreground))]",
+              isFile ? "cursor-pointer" : "cursor-default",
+            )}
+          >
+            {depth > 0 && (
+              <>
+                <span className="absolute bottom-1 left-[-7px] top-[-9px] w-[1.5px] bg-[linear-gradient(180deg,hsl(var(--primary)/0.42),hsl(var(--foreground)/0.24))]" />
+                <span className="absolute left-[-7px] top-1/2 h-[1.5px] w-[7px] -translate-y-1/2 bg-[hsl(var(--primary)/0.38)]" />
+              </>
+            )}
+            <span
+              className={cn(
+                "flex h-5 w-5 shrink-0 items-center justify-center rounded-md transition-all duration-150",
+                isSelected
+                  ? "bg-[hsl(var(--primary)/0.16)] text-[hsl(var(--primary))]"
+                  : child.type === "folder"
+                    ? "text-[hsl(var(--primary))]"
+                    : "text-[hsl(var(--foreground)/0.74)] group-hover/tree:text-[hsl(var(--foreground))]",
+              )}
+            >
+              {child.type === "folder" ? (
+                <Folder className="h-3.5 w-3.5" />
+              ) : (
+                <FileIcon className="h-3.5 w-3.5" />
+              )}
+            </span>
+
+            <div className="flex min-w-0 flex-1 items-center gap-2">
+              <span
+                className={cn(
+                  "truncate",
+                  child.type === "folder"
+                    ? "font-semibold text-[hsl(var(--foreground)/0.95)]"
+                    : "font-medium text-[hsl(var(--foreground)/0.86)]",
+                  isSelected && "text-[hsl(var(--foreground))]",
+                )}
+              >
+                {name}
+              </span>
+              <span className="ml-auto shrink-0 rounded-full border border-[hsl(var(--border)/0.6)] bg-[hsl(var(--background)/0.5)] px-1.5 py-0.5 text-[9px] uppercase tracking-[0.12em] text-[hsl(var(--foreground)/0.6)]">
+                {child.type === "folder" ? Object.keys(child.children).length : child.file.language}
+              </span>
+            </div>
+          </div>
+
+          {child.type === "folder" && (
+            <div className="relative py-0.5">
+              {renderTree(child, depth + 1)}
+            </div>
+          )}
+        </div>
+      );
+    });
   };
 
   if (!isOpen) return <CodePanelLoading onClose={onClose} />;
 
   return (
-    <div className="relative h-full flex flex-col bg-card/50 border-l border-border/50 overflow-hidden">
+    <div className="relative flex h-full flex-col overflow-hidden border-l border-[hsl(var(--border)/0.72)] bg-[linear-gradient(180deg,hsl(var(--card)/0.94),hsl(var(--background)/0.98))] text-foreground">
       {/* Header */}
-      <div className="px-4 py-3 border-b border-border/50 flex items-center justify-between bg-gradient-to-r from-secondary/50 via-secondary/30 to-secondary/20">
-        <div className="flex items-center gap-2.5">
-          <div className="relative flex items-center justify-center w-7 h-7 rounded-lg bg-primary/10 ring-1 ring-primary/20">
-            <Braces className="w-4 h-4 text-primary" />
+      <div className="border-b border-[hsl(var(--border)/0.68)] bg-[hsl(var(--background)/0.5)] backdrop-blur-xl">
+        <div className="flex items-center justify-between gap-2 px-3 py-1.5">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <div className="relative flex h-7 w-7 items-center justify-center rounded-lg border border-[hsl(var(--primary)/0.18)] bg-[linear-gradient(135deg,hsl(var(--primary)/0.22),hsl(var(--accent)/0.1))] shadow-[0_8px_18px_hsl(var(--primary)/0.12)]">
+            <Braces className="h-3.5 w-3.5 text-[hsl(var(--foreground))]" />
             {isFresh && (
               <span className="absolute -top-0.5 -right-0.5 flex h-2.5 w-2.5">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
@@ -481,27 +858,27 @@ export function CodePanel({
               </span>
             )}
           </div>
-          <div className="flex flex-col leading-tight">
-            <span className="text-sm font-semibold tracking-tight">Code</span>
-            {isFresh && activeFile ? (
-              <span className="text-[10px] text-emerald-500 flex items-center gap-1 font-medium">
-                <Sparkles className="w-3 h-3" />
-                Editing {activeFile.name}
+          <div className="min-w-0">
+            <div className="flex min-w-0 items-center gap-1.5 overflow-hidden">
+              <span className="shrink-0 text-[13px] font-semibold tracking-tight">Code Workspace</span>
+              <span className="rounded-full border border-[hsl(var(--primary)/0.2)] bg-[hsl(var(--primary)/0.1)] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.16em] text-[hsl(var(--primary))]">
+                {activeDiff ? "Diff Mode" : isEditing ? "Editing" : "Read Only"}
               </span>
-            ) : activeDiff ? (
-              <span className="text-[10px] text-muted-foreground">
-                Reviewing changes
+              <span className="rounded-full border border-[hsl(var(--border)/0.62)] bg-[hsl(var(--background)/0.72)] px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
+                {projectFiles.length} files
               </span>
-            ) : null}
+            </div>
+
           </div>
+
           {activeDiff && (
-            <div className="ml-2 flex items-center gap-1.5 text-[10px] font-mono">
-              <span className="flex items-center gap-0.5 text-emerald-500">
-                <Plus className="w-3 h-3" />
+            <div className="hidden items-center gap-2 rounded-full border border-[hsl(var(--border)/0.62)] bg-[hsl(var(--background)/0.72)] px-3 py-1 text-[11px] font-medium md:flex">
+              <span className="flex items-center gap-1 text-emerald-500">
+                <Plus className="h-3 w-3" />
                 {diffStats.added}
               </span>
-              <span className="flex items-center gap-0.5 text-rose-500">
-                <Minus className="w-3 h-3" />
+              <span className="flex items-center gap-1 text-rose-500">
+                <Minus className="h-3 w-3" />
                 {diffStats.removed}
               </span>
             </div>
@@ -509,18 +886,20 @@ export function CodePanel({
         </div>
         <button
           onClick={onClose}
-          className="p-1.5 rounded-lg hover:bg-secondary transition-colors"
+          className={cn(codeTopBarButtonClass, "h-7 w-7 shrink-0")}
         >
-          <X className="w-4 h-4" />
+          <X className="h-3.5 w-3.5" />
         </button>
+      </div>
       </div>
 
       {/* Recent Changes strip — only when there are live diffs */}
       {recentEditedPaths.length > 0 && (
-        <div className="px-3 py-2 border-b border-border/50 bg-background/30 flex items-center gap-2 overflow-x-auto">
-          <span className="shrink-0 text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
-            Recent edits
-          </span>
+        <div className="border-b border-[hsl(var(--border)/0.6)] bg-[hsl(var(--background)/0.34)] px-4 py-2.5">
+          <div className="flex items-center gap-2 overflow-x-auto scrollbar-none">
+            <span className="shrink-0 text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+              Recent edits
+            </span>
           <div className="flex items-center gap-1.5">
             {recentEditedPaths.slice(0, 8).map((path) => {
               const fileObj = projectFiles.find((f) => f.path === path);
@@ -541,221 +920,304 @@ export function CodePanel({
                   }}
                   title={path}
                   className={cn(
-                    "shrink-0 flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium",
-                    "border transition-all duration-200",
+                    "shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-all duration-200",
                     isActive
-                      ? "border-primary/50 bg-primary/10 text-primary"
-                      : "border-border/60 text-muted-foreground hover:text-foreground hover:border-border",
-                    fresh && "ring-1 ring-emerald-500/40 animate-pulse",
+                      ? "border-[hsl(var(--primary)/0.28)] bg-[hsl(var(--primary)/0.12)] text-[hsl(var(--primary))]"
+                      : "border-[hsl(var(--border)/0.62)] bg-[hsl(var(--background)/0.7)] text-muted-foreground hover:border-[hsl(var(--primary)/0.18)] hover:bg-[hsl(var(--foreground)/0.05)] hover:text-foreground",
+                    fresh && "ring-1 ring-emerald-500/35",
                   )}
                 >
-                  <FileIcon className="w-3 h-3" />
-                  {name}
+                  <span className="flex items-center gap-1.5">
+                    <FileIcon className="h-3 w-3" />
+                    {name}
+                  </span>
                 </button>
               );
             })}
+          </div>
           </div>
         </div>
       )}
 
       {/* Toolbar */}
-      <div className="px-4 py-2 border-b border-border/50 flex justify-between bg-background/20">
-        <button
-          onClick={() => setShowFolderView((v) => !v)}
-          className="flex items-center gap-2 px-3 py-1.5 rounded-lg
-                     text-xs border border-border/50 hover:bg-secondary"
-        >
-          <FolderTree className="w-4 h-4" />
-          {showFolderView ? "Show Code" : "Show Files"}
-        </button>
-
-        <button
-          onClick={() => setShowFolderView((v) => !v)}
-          className="flex items-center gap-2 px-3 py-1.5 rounded-lg
-                     text-xs text-muted-foreground hover:bg-secondary"
-        >
-          <FileIcon className="w-4 h-4 text-muted-foreground" />
-          {activeFile?.name?.toUpperCase()}
-        </button>
-
-        {activeFile && (
-          <div className="flex gap-1">
-            {activeDiff && (
-              <button
-                type="button"
-                onClick={() => setCodeDiffForFile(activeFile.path, null)}
-                className="px-3 py-1.5 rounded-lg text-xs border border-amber-500/40 text-amber-600 dark:text-amber-400 hover:bg-amber-500/10"
-                title="Hide diff overlay"
-              >
-                Exit diff
-              </button>
-            )}
-            {/* EDIT */}
+      <div className="border-b border-[hsl(var(--border)/0.6)] bg-[hsl(var(--background)/0.34)] px-2.5 py-1.5">
+        <div className="flex min-w-0 items-center justify-between gap-2">
             <button
-              onClick={() => {
-                setIsEditing(true);
-                setEditedContent(activeFile.content);
-              }}
-              className="px-3 py-1.5 rounded-lg text-xs hover:bg-secondary"
-              disabled={!!activeDiff}
+              onClick={() => setShowFolderView((v) => !v)}
+              className={codeToolbarButtonClass}
             >
-              <Pencil className="w-3.5 h-3.5" />
+              <FolderTree className="h-3.5 w-3.5" />
+              {showFolderView ? "Show Code" : "Show Files"}
             </button>
 
-            {/* SAVE */}
-            {isEditing && (
-              <button
-                onClick={handleSave}
-                className="px-3 py-1.5 rounded-lg text-xs hover:bg-secondary"
-              >
-                <Save className="w-3.5 h-3.5" />
-              </button>
-            )}
-
-            <button
-              onClick={handleCopy}
-              className="px-3 py-1.5 rounded-lg text-xs hover:bg-secondary"
-            >
-              {copied ? (
-                <Check className="w-3.5 h-3.5" />
-              ) : (
-                <Copy className="w-3.5 h-3.5" />
+          {activeFile && (
+            <div className="flex min-w-0 shrink-0 items-center gap-1">
+              {activeDiff && (
+                <button
+                  type="button"
+                  onClick={() => setCodeDiffForFile(activeFile.path, null)}
+                  className={cn(
+                    codeToolbarButtonClass,
+                    "border-amber-500/35 text-amber-600 hover:bg-amber-500/10 hover:text-amber-700 dark:text-amber-400 dark:hover:text-amber-300",
+                  )}
+                  title="Hide diff overlay"
+                >
+                  Exit diff
+                </button>
               )}
-            </button>
 
-            <button
-              onClick={handleDownload}
-              className="px-3 py-1.5 rounded-lg text-xs hover:bg-secondary"
-            >
-              <Download className="w-3.5 h-3.5" />
-            </button>
+              <button
+                onClick={() => {
+                  setIsEditing(true);
+                  setEditedContent(activeFile.content);
+                }}
+                className={cn(
+                  codeToolbarButtonClass,
+                  activeDiff && "cursor-not-allowed opacity-50 hover:bg-[hsl(var(--background)/0.78)] hover:text-[hsl(var(--muted-foreground))]",
+                )}
+                disabled={!!activeDiff}
+                title="Edit file"
+              >
+                <Pencil className="h-3.5 w-3.5" />
+                <span>Edit</span>
+              </button>
 
-            <button className="p-1.5 rounded-lg hover:bg-secondary">
-              <Settings2 className="w-4 h-4" />
-            </button>
-          </div>
-        )}
+              {isEditing && (
+                <button
+                  onClick={handleSave}
+                  className={cn(
+                    codeToolbarButtonClass,
+                    "border-[hsl(var(--primary)/0.28)] bg-[linear-gradient(135deg,hsl(var(--primary)/0.16),hsl(var(--accent)/0.08))] text-[hsl(var(--foreground))]",
+                  )}
+                >
+                  <Save className="h-3.5 w-3.5" />
+                  <span>Save</span>
+                </button>
+              )}
+
+              <button
+                onClick={handleCopy}
+                className={cn(
+                  codeToolbarButtonClass,
+                  copied && "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+                )}
+                title="Copy code"
+              >
+                {copied ? (
+                  <Check className="h-3.5 w-3.5" />
+                ) : (
+                  <Copy className="h-3.5 w-3.5" />
+                )}
+                <span>{copied ? "Copied" : "Copy"}</span>
+              </button>
+
+              <button
+                onClick={handleDownload}
+                className={codeToolbarButtonClass}
+                title="Download file"
+              >
+                <Download className="h-3.5 w-3.5" />
+                <span>Download</span>
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Viewer */}
-      <div
-        ref={codeScrollRef}
-        onScroll={handleCodeScroll}
-        className="flex-1 overflow-auto bg-[#011627] relative"
-      >
-        {showFolderView || !activeFile ? (
-          <div className="p-4 text-sm bg-background/40">
-            <div className="flex items-center gap-2 mb-3 text-primary font-semibold">
-              <FolderTree className="w-4 h-4" />
-              Project Structure
-            </div>
-            {renderTree(folderTree)}
-          </div>
-        ) : activeDiff ? (
+      <div className="relative flex-1 min-h-0 p-2.5">
+        <div className="code-panel-surface relative h-full overflow-hidden rounded-[24px] border border-[hsl(var(--border)/0.62)] shadow-[0_24px_52px_hsl(var(--background)/0.18)]">
+          <div className="code-panel-grid absolute inset-0 opacity-[0.14]" />
+          <div className="pointer-events-none absolute inset-x-0 top-0 z-[1] h-24 bg-[linear-gradient(180deg,hsl(var(--primary)/0.12),transparent)] opacity-70" />
+
           <div
-            key={activeDiff.receivedAt ?? activeDiff.file}
-            className={cn(
-              "h-full w-full relative",
-              "animate-in fade-in-0 zoom-in-[0.98] duration-500",
-              isFresh && "ring-1 ring-inset ring-emerald-500/20",
-            )}
+            ref={codeScrollRef}
+            onScroll={handleCodeScroll}
+            className="code-panel-scrollbar relative z-10 h-full overflow-auto"
           >
-            {isFresh && (
+            {showFolderView || !activeFile ? (
+              <div className="min-h-full p-3">
+                <div className="mb-3 flex items-center justify-between gap-3 rounded-2xl border border-[hsl(var(--border)/0.5)] bg-[hsl(var(--background)/0.42)] px-3 py-2">
+                  <div className="flex min-w-0 items-center gap-2 text-[hsl(var(--foreground))]">
+                    <FolderTree className="h-4 w-4 shrink-0 text-[hsl(var(--primary))]" />
+                    <div>
+                      <div className="text-xs font-semibold">Project Explorer</div>
+                      <div className="truncate text-[10px] text-muted-foreground">
+                        Folders and files are grouped like a code workspace.
+                      </div>
+                    </div>
+                  </div>
+
+                  <span className="shrink-0 rounded-full border border-[hsl(var(--border)/0.62)] bg-[hsl(var(--background)/0.72)] px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                    {projectFiles.length} files
+                  </span>
+                </div>
+
+                <div className="rounded-2xl border border-[hsl(var(--border)/0.64)] bg-[hsl(var(--background)/0.4)] p-1.5 shadow-[inset_0_1px_0_hsl(var(--foreground)/0.05)]">
+                  {renderTree(folderTree)}
+                </div>
+              </div>
+            ) : activeDiff ? (
               <div
-                className="pointer-events-none absolute inset-0 z-10 animate-shimmer"
-                style={{
-                  background:
-                    "linear-gradient(90deg, transparent 0%, rgba(16,185,129,0.12) 50%, transparent 100%)",
-                  backgroundSize: "200% 100%",
+                key={activeDiff.receivedAt ?? activeDiff.file}
+                className={cn(
+                  "relative h-full w-full animate-in fade-in-0 zoom-in-[0.98] duration-500",
+                  isFresh && "ring-1 ring-inset ring-emerald-500/20",
+                )}
+              >
+                {isFresh && (
+                  <div
+                    className="pointer-events-none absolute inset-0 z-10 animate-shimmer"
+                    style={{
+                      background:
+                        "linear-gradient(90deg, transparent 0%, rgba(16,185,129,0.12) 50%, transparent 100%)",
+                      backgroundSize: "200% 100%",
+                    }}
+                  />
+                )}
+
+                <div className="absolute inset-x-0 top-0 z-20 flex items-center justify-between border-b border-[hsl(var(--border)/0.58)] bg-[hsl(var(--background)/0.7)] px-4 py-2.5 backdrop-blur-xl">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className="rounded-full border border-[hsl(var(--primary)/0.2)] bg-[hsl(var(--primary)/0.1)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-[hsl(var(--primary))]">
+                      Diff
+                    </span>
+                    <span className="truncate text-xs text-muted-foreground">
+                      {activeFile.path}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 text-[11px] font-medium">
+                    <span className="flex items-center gap-1 text-emerald-500">
+                      <Plus className="h-3 w-3" />
+                      {diffStats.added}
+                    </span>
+                    <span className="flex items-center gap-1 text-rose-500">
+                      <Minus className="h-3 w-3" />
+                      {diffStats.removed}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="absolute inset-x-0 bottom-0 top-[45px]">
+                  <DiffEditor
+                    beforeMount={applyMonacoTheme}
+                    height="100%"
+                    theme={codeTheme.monacoThemeName}
+                    original={activeDiff.before}
+                    modified={activeDiff.after}
+                    language={getLanguage(activeFile?.language || "tsx")}
+                    options={{
+                      readOnly: true,
+                      renderSideBySide: true,
+                      minimap: { enabled: false },
+                      fontSize: 13,
+                      fontFamily: "JetBrains Mono, monospace",
+                      scrollBeyondLastLine: false,
+                      renderOverviewRuler: true,
+                      diffWordWrap: "on",
+                      automaticLayout: true,
+                      renderIndicators: true,
+                      smoothScrolling: true,
+                      scrollbar: {
+                        verticalScrollbarSize: 12,
+                        horizontalScrollbarSize: 12,
+                        useShadows: false,
+                      },
+                    }}
+                  />
+                </div>
+              </div>
+            ) : isEditing ? (
+              <Editor
+                beforeMount={applyMonacoTheme}
+                height="100%"
+                defaultLanguage={getLanguage(activeFile?.language)}
+                value={editedContent}
+                onChange={(value) => setEditedContent(value || "")}
+                theme={codeTheme.monacoThemeName}
+                onMount={(editor, monaco) => {
+                  applyMonacoTheme(monaco);
+                  monaco.languages.typescript.typescriptDefaults.addExtraLib(
+                    TYPE_DEFINITIONS,
+                    "file:///node_modules/@types/ambient.d.ts"
+                  );
+
+                  monaco.languages.typescript.typescriptDefaults.setCompilerOptions({
+                    target: monaco.languages.typescript.ScriptTarget.Latest,
+                    module: monaco.languages.typescript.ModuleKind.ESNext,
+                    lib: ["ES2020", "DOM", "DOM.Iterable"],
+                    jsx: monaco.languages.typescript.JsxEmit.React,
+                    jsxFactory: "React.createElement",
+                    jsxFragmentFactory: "React.Fragment",
+                    allowJs: true,
+                    strict: false,
+                    esModuleInterop: true,
+                    skipLibCheck: true,
+                    forceConsistentCasingInFileNames: true,
+                    resolveJsonModule: true,
+                    moduleResolution: monaco.languages.typescript.ModuleResolutionKind.NodeJs,
+                  });
+
+                  setTimeout(() => {
+                    editor.getAction("editor.action.formatDocument")?.run();
+                  }, 200);
+                }}
+                options={{
+                  fontSize: 13,
+                  fontFamily: "JetBrains Mono, monospace",
+                  minimap: { enabled: false },
+                  wordWrap: "on",
+                  automaticLayout: true,
+                  scrollBeyondLastLine: false,
+                  formatOnType: true,
+                  formatOnPaste: true,
+                  smoothScrolling: true,
+                  cursorSmoothCaretAnimation: "on",
+                  renderLineHighlight: "all",
+                  padding: { top: 18, bottom: 24 },
+                  scrollbar: {
+                    verticalScrollbarSize: 12,
+                    horizontalScrollbarSize: 12,
+                    useShadows: false,
+                  },
                 }}
               />
+            ) : (
+              <Highlight
+                theme={codeTheme.prismTheme}
+                code={activeFile.content}
+                language={activeFile.language}
+              >
+                {({ tokens, getLineProps, getTokenProps }) => (
+                  <pre className="min-h-full min-w-fit px-4 py-5 text-[13px] leading-6 font-mono text-[hsl(var(--foreground))]">
+                    {tokens.map((line, i) => {
+                      const lineProps = getLineProps({ line });
+
+                      return (
+                        <div
+                          key={i}
+                          {...lineProps}
+                          className={cn(
+                            "group flex min-w-fit items-start rounded-xl border-l border-transparent px-2 py-[1px] transition-colors duration-150 hover:border-[hsl(var(--primary)/0.28)] hover:bg-[hsl(var(--primary)/0.08)]",
+                            lineProps.className,
+                          )}
+                        >
+                          <span className="w-10 shrink-0 select-none pr-4 text-right text-[11px] font-medium text-[hsl(var(--muted-foreground)/0.82)]">
+                            {i + 1}
+                          </span>
+                          <span className="flex-1 whitespace-pre">
+                            {line.map((token, key) => (
+                              <span key={key} {...getTokenProps({ token })} />
+                            ))}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </pre>
+                )}
+              </Highlight>
             )}
-            <DiffEditor
-              height="100%"
-              theme="vs-dark"
-              original={activeDiff.before}
-              modified={activeDiff.after}
-              language={getLanguage(activeFile?.language || "tsx")}
-              options={{
-                readOnly: true,
-                renderSideBySide: true,
-                minimap: { enabled: false },
-                fontSize: 13,
-                scrollBeyondLastLine: false,
-                renderOverviewRuler: true,
-                diffWordWrap: "on",
-              }}
-            />
           </div>
-        ) : isEditing ? (
-          <Editor
-            height="100%"
-            defaultLanguage={getLanguage(activeFile?.language)}
-            value={editedContent}
-            onChange={(value) => setEditedContent(value || "")}
-            theme="vs-dark"
-            onMount={(editor, monaco) => {
-              // Add ambient type definitions for common libraries
-              monaco.languages.typescript.typescriptDefaults.addExtraLib(
-                TYPE_DEFINITIONS,
-                "file:///node_modules/@types/ambient.d.ts"
-              );
-
-              // Configure TypeScript compiler options
-              monaco.languages.typescript.typescriptDefaults.setCompilerOptions({
-                target: monaco.languages.typescript.ScriptTarget.Latest,
-                module: monaco.languages.typescript.ModuleKind.ESNext,
-                lib: ["ES2020", "DOM", "DOM.Iterable"],
-                jsx: monaco.languages.typescript.JsxEmit.React,
-                jsxFactory: "React.createElement",
-                jsxFragmentFactory: "React.Fragment",
-                allowJs: true,
-                strict: false,
-                esModuleInterop: true,
-                skipLibCheck: true,
-                forceConsistentCasingInFileNames: true,
-                resolveJsonModule: true,
-                moduleResolution: monaco.languages.typescript.ModuleResolutionKind.NodeJs,
-              });
-
-              setTimeout(() => {
-                editor.getAction("editor.action.formatDocument")?.run();
-              }, 200);
-            }}
-            
-            options={{
-              fontSize: 13,
-              fontFamily: "monospace",
-              minimap: { enabled: false },
-              wordWrap: "on",
-              automaticLayout: true,
-              scrollBeyondLastLine: false,
-              formatOnType: true,
-              formatOnPaste: true,
-            }}
-          />
-        ) : (
-          <Highlight
-            theme={themes.nightOwl}
-            code={activeFile.content}
-            language={activeFile.language}
-          >
-            {({ tokens, getLineProps, getTokenProps }) => (
-              <pre className="text-[13px] p-4 font-mono">
-                {tokens.map((line, i) => (
-                  <div key={i} {...getLineProps({ line })}>
-                    <span className="pr-6 text-slate-500 select-none">
-                      {i + 1}
-                    </span>
-                    {line.map((token, key) => (
-                      <span key={key} {...getTokenProps({ token })} />
-                    ))}
-                  </div>
-                ))}
-              </pre>
-            )}
-          </Highlight>
-        )}
+        </div>
       </div>
 
       {showJumpToBottom && !isEditing && (
@@ -775,16 +1237,25 @@ export function CodePanel({
 
       {/* Footer */}
       {activeFile && (
-        <div className="px-4 py-2 border-t border-border/50 bg-secondary/30 text-xs text-muted-foreground flex justify-between">
-          <span>
-            {activeFile.language.toUpperCase()}
+        <div className="border-t border-[hsl(var(--border)/0.6)] bg-[hsl(var(--background)/0.5)] px-4 py-2 backdrop-blur-xl">
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="rounded-full border border-[hsl(var(--border)/0.62)] bg-[hsl(var(--background)/0.72)] px-2.5 py-1 font-medium text-foreground">
+                {(activeFile.language || "text").toUpperCase()}
+              </span>
+              <span className="rounded-full border border-[hsl(var(--border)/0.62)] bg-[hsl(var(--background)/0.72)] px-2.5 py-1">
+                {(activeFile.content ?? "").split("\n").length} lines
+              </span>
             {activeDiff ? (
-              <span className="ml-2 text-amber-600 dark:text-amber-400">
-                · diff (red removed, green added)
+              <span className="rounded-full border border-[hsl(var(--destructive)/0.18)] bg-[hsl(var(--destructive)/0.08)] px-2.5 py-1 text-[hsl(var(--destructive))]">
+                Diff view: red removed, green added
               </span>
             ) : null}
-          </span>
-          <span>{(activeFile.content ?? "").split("\n").length} lines</span>
+            </div>
+            <span className="max-w-full truncate text-[11px]">
+              {activeFile.path}
+            </span>
+          </div>
         </div>
       )}
     </div>

@@ -319,12 +319,15 @@ def rebuild_frontend(project_id: str) -> tuple[Path, int]:
             content = content.replace('target: ""', "target: 'http://localhost:7979'")
             content = content.replace("target: 'http://localhost:8000'", "target: 'http://localhost:7979'")
             content = content.replace('target: "http://localhost:8000"', "target: 'http://localhost:7979'")
-            # Inject preview proxy so `vite preview` forwards /api to the backend
+            # Inject preview block so `vite preview` forwards /api and listens on 0.0.0.0
             if "preview:" not in content:
                 content = content.replace(
                     "export default defineConfig({",
-                    "export default defineConfig({\n  preview: { host: '127.0.0.1', proxy: { '/api': { target: 'http://localhost:7979', changeOrigin: true } } },",
+                    "export default defineConfig({\n  preview: { host: '0.0.0.0', port: 5959, strictPort: true, proxy: { '/api': { target: 'http://localhost:7979', changeOrigin: true } } },",
                 )
+            # Fix any hardcoded 127.0.0.1 host in preview/server blocks
+            content = content.replace("host: '127.0.0.1'", "host: '0.0.0.0'")
+            content = content.replace('host: "127.0.0.1"', 'host: "0.0.0.0"')
 
         # Fix SVG imports used as React components
         if rel.endswith((".ts", ".tsx")) and re.search(r'import \w+ from ["\'][^"\']+\.svg(?:\?react)?["\']', content):
@@ -370,6 +373,14 @@ def rebuild_frontend(project_id: str) -> tuple[Path, int]:
                 content,
             )
 
+        # Ensure vite server/preview binds to 0.0.0.0 so browser can reach it on Windows
+        # (Windows 11 resolves `localhost` to ::1/IPv6 but 127.0.0.1-only servers don't answer on ::1)
+        if rel == "vite.config.ts":
+            content = content.replace("host: '127.0.0.1'", "host: '0.0.0.0'")
+            content = content.replace('host: "127.0.0.1"', 'host: "0.0.0.0"')
+            # Inject host into server block if missing
+            content = re.sub(r'(server:\s*\{)(?![^}]*host:)', r"\1 host: '0.0.0.0',", content)
+
         # Inject axios auth interceptor if missing
         if rel in ("src/services/api.ts", "src/services/apiService.ts", "src/api/index.ts") \
                 and "axios.create" in content and "interceptors.request" not in content:
@@ -402,6 +413,12 @@ api.interceptors.response.use(
                 content = content.replace("export default", interceptor + "\nexport default", 1)
             else:
                 content += interceptor
+
+        # Fix mockData import name mismatch: LLM sometimes generates getProductBySlug
+        # in mockData.ts but getProductById in ProductDetailPage.tsx (or vice-versa).
+        # Normalise everything to getProductBySlug which is what mockData always exports.
+        if rel.endswith((".ts", ".tsx")) and "getProductById" in content:
+            content = content.replace("getProductById", "getProductBySlug")
 
         # Strip markdown fences
         if content.strip().startswith("```"):
@@ -485,6 +502,24 @@ api.interceptors.response.use(
     }, indent=2), encoding="utf-8")
     _log("[Preview] tsconfig files written")
 
+    # Guarantee index.html exists at frontend root — vite dev/build both need it.
+    # If the LLM omitted it, inject a safe default so the server doesn't 404.
+    _index_html = frontend_path / "index.html"
+    if not _index_html.exists():
+        _index_html.write_text(
+            '<!doctype html>\n<html lang="en">\n  <head>\n'
+            '    <meta charset="UTF-8" />\n'
+            '    <meta name="viewport" content="width=device-width, initial-scale=1.0" />\n'
+            '    <title>App</title>\n'
+            '  </head>\n  <body>\n'
+            '    <div id="root"></div>\n'
+            '    <script type="module" src="/src/main.tsx"></script>\n'
+            '  </body>\n</html>\n',
+            encoding="utf-8",
+        )
+        _log("[Preview] index.html was missing — injected default")
+        written += 1
+
     return frontend_path, written
 
 
@@ -518,6 +553,48 @@ def rebuild_backend(project_id: str) -> Path:
         content = content.replace("as def ", "async def ")
         content = content.replace("ascontextmanager", "asynccontextmanager")
 
+        # Rewrite deprecated @app.on_event("startup"/"shutdown") → lifespan pattern
+        # so uvicorn doesn't print deprecation errors that fill stderr and confuse diagnosis.
+        # Only patch if there's no lifespan already.
+        if "main.py" in rel and "@app.on_event" in content and "lifespan" not in content:
+            # Collect startup/shutdown bodies
+            startup_body = ""
+            shutdown_body = ""
+            _on_startup = re.search(
+                r'@app\.on_event\(["\']startup["\']\)\s*\nasync def \w+\([^)]*\):\s*\n((?:[ \t]+[^\n]*\n)*)',
+                content)
+            _on_shutdown = re.search(
+                r'@app\.on_event\(["\']shutdown["\']\)\s*\nasync def \w+\([^)]*\):\s*\n((?:[ \t]+[^\n]*\n)*)',
+                content)
+            if _on_startup:
+                startup_body = _on_startup.group(1).rstrip()
+            if _on_shutdown:
+                shutdown_body = _on_shutdown.group(1).rstrip()
+            # Remove the old event handlers
+            content = re.sub(
+                r'@app\.on_event\(["\']startup["\']\)\s*\nasync def \w+\([^)]*\):\s*\n(?:[ \t]+[^\n]*\n)*',
+                '', content)
+            content = re.sub(
+                r'@app\.on_event\(["\']shutdown["\']\)\s*\nasync def \w+\([^)]*\):\s*\n(?:[ \t]+[^\n]*\n)*',
+                '', content)
+            # Inject lifespan before `app = FastAPI(`
+            lifespan_code = (
+                "from contextlib import asynccontextmanager\n\n"
+                "@asynccontextmanager\nasync def lifespan(_app):\n"
+            )
+            lifespan_code += f"    try:\n{startup_body}\n    except Exception as _e:\n        print(f'Startup warning: {{_e}}')\n" if startup_body else "    pass\n"
+            lifespan_code += "    yield\n"
+            if shutdown_body:
+                lifespan_code += f"    try:\n{shutdown_body}\n    except Exception: pass\n"
+            lifespan_code += "\n"
+            content = re.sub(
+                r'(app\s*=\s*FastAPI\()',
+                lifespan_code + r'\1lifespan=lifespan, ',
+                content, count=1)
+            if "asynccontextmanager" not in content.split("@asynccontextmanager")[0]:
+                pass  # already injected above
+            _log(f"[Preview] Patched deprecated @app.on_event in {rel}")
+
         # Fix CORS — ensure 5959 is always allowed
         if "main.py" in rel and "CORSMiddleware" in content and "5959" not in content:
             content = content.replace(
@@ -528,6 +605,21 @@ def rebuild_backend(project_id: str) -> Path:
                 "'http://localhost:5173'",
                 "'http://localhost:5959', 'http://localhost:5173'",
             )
+
+        # Patch database.py: wrap connect_db in try/except so app starts without MongoDB
+        if "database.py" in rel and "AsyncIOMotorClient" in content and "try:" not in content:
+            content = re.sub(
+                r'(async def connect_db\([^)]*\):)\s*\n((?:[ \t]+[^\n]*\n)+)',
+                lambda m: (
+                    m.group(1) + "\n"
+                    "    try:\n"
+                    + "\n".join("    " + l for l in m.group(2).splitlines()) + "\n"
+                    "    except Exception as _e:\n"
+                    "        print(f'[DB] MongoDB unavailable (frontend-only mode): {_e}')\n"
+                ),
+                content,
+            )
+            _log(f"[Preview] Wrapped connect_db in try/except in {rel}")
 
         # Fix circular import in security.py
         if "from app.services.user_service import" in content and "app/utils/security.py" in rel:
@@ -564,6 +656,22 @@ def rebuild_backend(project_id: str) -> Path:
                 flags=re.DOTALL,
             )
 
+        # Fix Pydantic v2 Annotated[ObjectId, ...] pattern — ObjectId cannot be
+        # used as the base type in Annotated for Pydantic v2. Replace with str.
+        if "Annotated" in content and "ObjectId" in content and "BaseModel" in content:
+            # PyObjectId = Annotated[\n    ObjectId, ...] (multi-line)
+            content = re.sub(
+                r'(PyObjectId\s*=\s*Annotated\[\s*\n?\s*)ObjectId\b',
+                r'\1str',
+                content,
+            )
+            # PyObjectId = Annotated[ObjectId, ...] (single-line)
+            content = re.sub(
+                r'(=\s*Annotated\[)ObjectId\b',
+                r'\1str',
+                content,
+            )
+
         # Fix deprecated Pydantic v1 PyObjectId validators
         if "__get_validators__" in content and "PyObjectId" in content:
             content = content.replace(
@@ -590,6 +698,18 @@ def rebuild_backend(project_id: str) -> Path:
             content = content.replace("PyObjectId(", "str(")
             content = content.replace("default_factory=PyObjectId", "default_factory=lambda: str(ObjectId())")
             content = content.replace("arbitrary_types_allowed = True", "")
+
+        # Fix raw ObjectId used as Pydantic v2 field type — Pydantic v2 can't
+        # generate a schema for bson.ObjectId without arbitrary_types_allowed.
+        # Replace all `: ObjectId` type annotations with `: str` and leave
+        # ObjectId() *calls* (in defaults/validators) untouched.
+        if "BaseModel" in content and "ObjectId" in content:
+            # `: ObjectId` and `Optional[ObjectId]` in field annotations
+            content = re.sub(r':\s*ObjectId\b(?!\s*\()', ': str', content)
+            content = re.sub(r'\bOptional\[ObjectId\]', 'Optional[str]', content)
+            content = re.sub(r'\bList\[ObjectId\]', 'List[str]', content)
+            content = re.sub(r'\bUnion\[ObjectId,', 'Union[str,', content)
+            content = re.sub(r',\s*ObjectId\]', ', str]', content)
 
         # Fix missing ObjectId import
         if "ObjectId" in content and "from bson import ObjectId" not in content:
@@ -835,6 +955,179 @@ def _npm_install(frontend_path: Path) -> bool:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# POST-DEBUGGER SAFETY PATCHES
+# ──────────────────────────────────────────────────────────────────────────────
+
+_MOTION_KEY_PATTERNS = [
+    # Pattern A: <motion key={x}.div key={y}> — has second (real) key attr
+    (
+        re.compile(r'<motion\s+key=\{[^}]+\}\.(\w+)((?:\s+[^>]*?)?\s+key=\{[^}]+\}[^>]*)>', re.DOTALL),
+        lambda m: f'<motion.{m.group(1)}{m.group(2)}>',
+    ),
+    # Pattern B: <motion key={x}.div> — no second key attr (insert nothing)
+    (
+        re.compile(r'<motion\s+key=\{([^}]+)\}\.(\w+)(\s*(?:[^>]*?)?)>', re.DOTALL),
+        lambda m: f'<motion.{m.group(2)} key={{{m.group(1)}}}{m.group(3)}>',
+    ),
+    # Pattern C: </motion key={x}.div> closing tags
+    (
+        re.compile(r'</motion\s+key=\{[^}]+\}\.(\w+)\s*>'),
+        lambda m: f'</motion.{m.group(1)}>',
+    ),
+]
+
+
+def _repair_jsx_after_debugger(frontend_path: Path) -> int:
+    """
+    Scan all .tsx files under frontend_path/src and fix LLM-generated
+    <motion key={x}.div> corruption that the debugger can re-introduce.
+    Returns the number of files that were modified.
+    """
+    src = frontend_path / "src"
+    if not src.is_dir():
+        return 0
+
+    fixed = 0
+    for tsx in src.rglob("*.tsx"):
+        try:
+            original = tsx.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            continue
+
+        text = original
+        for pattern, repl in _MOTION_KEY_PATTERNS:
+            text = pattern.sub(repl, text)
+
+        if text != original:
+            try:
+                tsx.write_text(text, encoding="utf-8")
+                fixed += 1
+                _log(f"[Preview] JSX repair: fixed {tsx.name}")
+            except Exception as e:
+                _log(f"[Preview] JSX repair write error {tsx.name}: {e}")
+
+    return fixed
+
+
+_CONFIG_PY_TEMPLATE = """\
+from pydantic_settings import BaseSettings
+
+
+class Settings(BaseSettings):
+    MONGODB_URL: str = "mongodb://localhost:27017"
+    DB_NAME: str = "app_db"
+    SECRET_KEY: str = "changeme-in-production"
+
+    class Config:
+        env_file = ".env"
+
+
+settings = Settings()
+"""
+
+_DATABASE_PY_TEMPLATE = """\
+from motor.motor_asyncio import AsyncIOMotorClient
+from app.config import settings
+
+client = None
+db = None
+
+
+async def connect_db():
+    global client, db
+    try:
+        client = AsyncIOMotorClient(settings.MONGODB_URL, serverSelectionTimeoutMS=3000)
+        db = client[settings.DB_NAME]
+        await client.server_info()
+    except Exception as e:
+        print(f"[DB] MongoDB unavailable: {e} — running without database")
+
+
+async def close_db():
+    global client
+    if client:
+        client.close()
+"""
+
+_MAIN_LIFESPAN_PATCH = '''\
+from contextlib import asynccontextmanager
+from fastapi import FastAPI
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    try:
+        from app.database import connect_db
+        await connect_db()
+    except Exception as e:
+        print(f"[Startup] DB connect skipped: {e}")
+    yield
+    try:
+        from app.database import close_db
+        await close_db()
+    except Exception:
+        pass
+
+
+app = FastAPI(lifespan=lifespan)
+'''
+
+
+def _ensure_backend_essentials(backend_path: Path) -> None:
+    """
+    Guarantee that the backend has the minimum files needed so uvicorn can
+    start even when the orchestrator skipped generating them.
+    """
+    app_dir = backend_path / "app"
+    app_dir.mkdir(parents=True, exist_ok=True)
+
+    init_file = app_dir / "__init__.py"
+    if not init_file.exists():
+        init_file.write_text("", encoding="utf-8")
+        _log("[Preview] Created backend/app/__init__.py")
+
+    config_file = app_dir / "config.py"
+    if not config_file.exists():
+        config_file.write_text(_CONFIG_PY_TEMPLATE, encoding="utf-8")
+        _log("[Preview] Created backend/app/config.py (fallback)")
+
+    database_file = app_dir / "database.py"
+    if not database_file.exists():
+        database_file.write_text(_DATABASE_PY_TEMPLATE, encoding="utf-8")
+        _log("[Preview] Created backend/app/database.py (fallback)")
+
+    # Patch main.py if it still uses deprecated @app.on_event
+    main_py = backend_path / "main.py"
+    if main_py.exists():
+        try:
+            src = main_py.read_text(encoding="utf-8", errors="replace")
+            if "@app.on_event" in src and "lifespan" not in src:
+                # Remove on_event startup/shutdown blocks and inject lifespan
+                src = re.sub(
+                    r'@app\.on_event\(["\']startup["\']\)\s*\nasync def [^\n]+\n(?:[ \t]+[^\n]*\n)*',
+                    "",
+                    src,
+                )
+                src = re.sub(
+                    r'@app\.on_event\(["\']shutdown["\']\)\s*\nasync def [^\n]+\n(?:[ \t]+[^\n]*\n)*',
+                    "",
+                    src,
+                )
+                # Replace bare `app = FastAPI()` with lifespan version
+                src = re.sub(
+                    r'app\s*=\s*FastAPI\(\)',
+                    "app = FastAPI(lifespan=lifespan)",
+                    src,
+                )
+                if "lifespan" not in src:
+                    src = _MAIN_LIFESPAN_PATCH + "\n" + src
+                main_py.write_text(src, encoding="utf-8")
+                _log("[Preview] Patched main.py: replaced @app.on_event with lifespan")
+        except Exception as e:
+            _log(f"[Preview] main.py patch error: {e}")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # CORE: RUN PROJECT
 # ──────────────────────────────────────────────────────────────────────────────
 def run_project(project_id: str) -> dict:
@@ -888,6 +1181,16 @@ def run_project(project_id: str) -> dict:
     stop_current_project()
     _kill_port(FRONTEND_PORT)
     _kill_port(BACKEND_PORT)
+    # Wait until ports are actually free — on Windows process termination is async
+    # and `--strictPort` will immediately fail if the port is still occupied.
+    _deadline = time.time() + 6.0
+    while time.time() < _deadline:
+        if not _port_alive(FRONTEND_PORT) and not _port_alive(BACKEND_PORT):
+            break
+        _kill_port(FRONTEND_PORT)
+        _kill_port(BACKEND_PORT)
+        time.sleep(0.3)
+    _log(f"[Preview] Ports cleared: fe={not _port_alive(FRONTEND_PORT)} be={not _port_alive(BACKEND_PORT)}")
 
     # ── Step: Copy files — ALWAYS run so regex-fixes in rebuild_frontend apply ──
     # _write_if_changed makes this cheap: if nothing's different on disk, zero writes.
@@ -922,6 +1225,12 @@ def run_project(project_id: str) -> dict:
         except Exception as e:
             _log(f"[Preview] Debugger error (non-fatal): {e}")
 
+        # Re-apply JSX safety patches AFTER the debugger — it can re-introduce
+        # broken patterns (e.g. <motion key={x}.div>) via LLM rewrites.
+        _jsx_n = _repair_jsx_after_debugger(frontend_path)
+        if _jsx_n:
+            _log(f"[Preview] Post-debugger JSX repair: {_jsx_n} file(s) cleaned")
+
         _advance("validate_python")
         try:
             _run_python_fix_loop(backend_path, max_rounds=1)
@@ -931,6 +1240,10 @@ def run_project(project_id: str) -> dict:
         _advance("fixing")
         _advance("validate_python")
         _log("[Preview] Skipped — dependencies and fixes already applied")
+
+    # Always ensure backend essentials exist (config.py, database.py, __init__.py)
+    # regardless of warm/cold path — the orchestrator may have skipped generating them.
+    _ensure_backend_essentials(backend_path)
 
     # ── Step: pip + npm install IN PARALLEL (hash-cached — instant if unchanged)
     _advance("dependencies")
@@ -960,13 +1273,29 @@ def run_project(project_id: str) -> dict:
 
     try:
         _log(f"[Preview] Starting backend ({uvicorn_module}) on :{BACKEND_PORT}…")
+        # Use sys.executable -m uvicorn so we always find uvicorn in the current
+        # Python environment regardless of PATH (shell=False + absolute interpreter).
         CURRENT_BACKEND_PROCESS = subprocess.Popen(
-            ["uvicorn", uvicorn_module, "--host", "127.0.0.1", "--port", str(BACKEND_PORT)],
-            cwd=str(backend_path), shell=True,
+            [sys.executable, "-m", "uvicorn", uvicorn_module,
+             "--host", "0.0.0.0", "--port", str(BACKEND_PORT),
+             "--log-level", "warning"],
+            cwd=str(backend_path), shell=False,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         )
+        # Give it 3 s to crash early (import error, syntax error, etc.)
+        # If it's still alive after that we proceed optimistically.
+        try:
+            CURRENT_BACKEND_PROCESS.wait(timeout=3.0)
+            # Process already exited — read stderr for diagnostics
+            _, _be_err = CURRENT_BACKEND_PROCESS.communicate()
+            _be_err_txt = _be_err.decode("utf-8", errors="ignore")[-800:]
+            _log(f"[Preview] Backend exited immediately — stderr:\n{_be_err_txt}")
+            CURRENT_BACKEND_PROCESS = None
+        except subprocess.TimeoutExpired:
+            _log("[Preview] Backend process alive after 3 s — waiting for port bind…")
     except Exception as e:
         _log(f"[Preview] Backend start error (non-fatal): {e}")
+        CURRENT_BACKEND_PROCESS = None
 
     # ── Step: Build React app — runs while backend is starting up ─────────────
     _advance("build_frontend")
@@ -1021,17 +1350,18 @@ def run_project(project_id: str) -> dict:
             _log(f"[Preview] Starting vite preview (static) on :{FRONTEND_PORT}…")
             preview_cmd = ([str(vite_bin), "preview"] if vite_bin.exists()
                            else ["npx.cmd", "vite", "preview"])
-            preview_cmd += ["--port", str(FRONTEND_PORT), "--host", "127.0.0.1", "--strictPort"]
+            preview_cmd += ["--port", str(FRONTEND_PORT), "--host", "0.0.0.0", "--strictPort"]
             CURRENT_FRONTEND_PROCESS = subprocess.Popen(
                 preview_cmd, cwd=str(frontend_path), shell=True,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=vite_env,
             )
         else:
             _log(f"[Preview] Starting Vite dev server on :{FRONTEND_PORT}…")
-            dev_cmd = ([str(vite_bin), "--port", str(FRONTEND_PORT), "--host", "127.0.0.1", "--strictPort"]
+            # No --strictPort on dev server: if port somehow still occupied, vite picks next free port
+            dev_cmd = ([str(vite_bin), "--port", str(FRONTEND_PORT), "--host", "0.0.0.0"]
                        if vite_bin.exists()
                        else ["npm.cmd", "run", "dev", "--",
-                             "--port", str(FRONTEND_PORT), "--host", "127.0.0.1", "--strictPort"])
+                             "--port", str(FRONTEND_PORT), "--host", "0.0.0.0"])
             CURRENT_FRONTEND_PROCESS = subprocess.Popen(
                 dev_cmd, cwd=str(frontend_path), shell=True,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=vite_env,
@@ -1042,9 +1372,32 @@ def run_project(project_id: str) -> dict:
 
     # ── Wait for backend AND frontend simultaneously ───────────────────────────
     fe_timeout = 30.0 if use_static else 90.0
+
+    def _wait_backend_port(timeout: float = 35.0) -> bool:
+        """Wait for backend port, but bail early if the process has already died."""
+        if CURRENT_BACKEND_PROCESS is None:
+            return False
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if _port_alive(BACKEND_PORT):
+                return True
+            # Process died — no point waiting longer
+            if CURRENT_BACKEND_PROCESS.poll() is not None:
+                try:
+                    _, _se = CURRENT_BACKEND_PROCESS.communicate(timeout=2)
+                    _log(f"[Preview] Backend process died — stderr: {_se.decode('utf-8', errors='ignore')[-2000:]}")
+                except Exception:
+                    pass
+                return False
+            time.sleep(0.4)
+        # Timed out — log stderr if process is still alive but not responding
+        if CURRENT_BACKEND_PROCESS and CURRENT_BACKEND_PROCESS.poll() is None:
+            _log("[Preview] Backend port wait timed out (process alive but not binding port)")
+        return False
+
     with ThreadPoolExecutor(max_workers=2) as pool:
         fe_f = pool.submit(_wait_for_port, FRONTEND_PORT, "127.0.0.1", fe_timeout)
-        be_f = pool.submit(_wait_for_port, BACKEND_PORT, "127.0.0.1", 35.0)
+        be_f = pool.submit(_wait_backend_port, 35.0)
         frontend_port_ok = fe_f.result()
         backend_port_ok  = be_f.result()
 
@@ -1057,11 +1410,12 @@ def run_project(project_id: str) -> dict:
                 CURRENT_FRONTEND_PROCESS.terminate()
             CURRENT_FRONTEND_PROCESS = None
             _kill_port(FRONTEND_PORT)
+            time.sleep(1.0)  # give OS time to release port
             try:
-                dev_cmd = ([str(vite_bin), "--port", str(FRONTEND_PORT), "--host", "127.0.0.1", "--strictPort"]
+                dev_cmd = ([str(vite_bin), "--port", str(FRONTEND_PORT), "--host", "0.0.0.0"]
                            if vite_bin.exists()
                            else ["npm.cmd", "run", "dev", "--",
-                                 "--port", str(FRONTEND_PORT), "--host", "127.0.0.1", "--strictPort"])
+                                 "--port", str(FRONTEND_PORT), "--host", "0.0.0.0"])
                 CURRENT_FRONTEND_PROCESS = subprocess.Popen(
                     dev_cmd, cwd=str(frontend_path), shell=True,
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=vite_env,

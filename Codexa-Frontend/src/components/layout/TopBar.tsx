@@ -21,12 +21,42 @@ import {
   Crown,
   Activity,
   Check,
+  MoreHorizontal,
+  Pencil,
+  Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
 import { useAppData } from "@/context/useAppData";
 import { useChatSearch } from "@/context/ChatSearchContext";
 import { UsageModal } from "@/components/usage/UsageModal";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { API_BASE } from "@/lib/api";
 
 interface Project {
   id: string;
@@ -70,6 +100,13 @@ export function TopBar({
   
   const [showProjectMenu, setShowProjectMenu] = useState(false);
 
+  const [renameTarget, setRenameTarget] = useState<Project | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  const [renameBusy, setRenameBusy] = useState(false);
+
+  const [deleteTarget, setDeleteTarget] = useState<Project | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+
   const [searchFocused, setSearchFocused] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [usageOpen, setUsageOpen] = useState(false);
@@ -80,6 +117,7 @@ export function TopBar({
     loadProjectfiles,
     setsingleProjectId,
     singleProjectId,
+    refreshData,
   } = useAppData();
 
   const {
@@ -100,6 +138,12 @@ export function TopBar({
   useEffect(() => {
     setProjects(userProjects || []);
   }, [userProjects]);
+
+  useEffect(() => {
+    if (renameTarget) {
+      setRenameValue(renameTarget.title);
+    }
+  }, [renameTarget]);
 
   useEffect(() => {
     const list = userProjects || [];
@@ -128,6 +172,104 @@ export function TopBar({
       description: "Your new project is being set up",
     });
     setShowProjectMenu(false);
+  };
+
+  const openRename = (project: Project) => {
+    setShowProjectMenu(false);
+    setRenameTarget(project);
+  };
+
+  const openDelete = (project: Project) => {
+    setShowProjectMenu(false);
+    setDeleteTarget(project);
+  };
+
+  const refreshProjects = async () => {
+    if (!userId) return;
+
+    try {
+      const response = await fetch(`${API_BASE}/projects/${userId}`);
+      const data = await response.json();
+
+      if (!response.ok || !data.ok) {
+        throw new Error(data.detail || "Could not refresh projects");
+      }
+
+      const nextProjects = (data.projects || []) as Project[];
+      setProjects(nextProjects);
+      setActiveProject((current) => {
+        const activeId = singleProjectId || current?._id || current?.id;
+        if (!activeId) return current;
+
+        return (
+          nextProjects.find(
+            (project) => (project._id ?? project.id) === activeId,
+          ) ?? null
+        );
+      });
+      refreshData();
+    } catch {
+      toast.error("Could not refresh projects");
+    }
+  };
+
+  const submitRename = async () => {
+    if (!userId || !renameTarget) return;
+
+    const title = renameValue.trim();
+    if (!title) {
+      toast.error("Enter a name");
+      return;
+    }
+
+    setRenameBusy(true);
+    try {
+      const response = await fetch(`${API_BASE}/projects/${renameTarget._id || renameTarget.id}?user_id=${encodeURIComponent(userId)}&title=${encodeURIComponent(title)}`, {
+        method: "PATCH",
+      });
+      const data = await response.json();
+
+      if (!response.ok || !data.ok) {
+        throw new Error(data.detail || "Rename failed");
+      }
+
+      toast.success("Project renamed");
+      setRenameTarget(null);
+      await refreshProjects();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Rename failed");
+    } finally {
+      setRenameBusy(false);
+    }
+  };
+
+  const submitDelete = async () => {
+    if (!userId || !deleteTarget) return;
+
+    setDeleteBusy(true);
+    try {
+      const response = await fetch(
+        `${API_BASE}/projects/${deleteTarget._id || deleteTarget.id}?user_id=${encodeURIComponent(userId)}`,
+        { method: "DELETE" },
+      );
+      const data = await response.json();
+
+      if (!response.ok || !data.ok) {
+        throw new Error(data.detail || "Delete failed");
+      }
+
+      toast.success("Project deleted");
+      if (singleProjectId === (deleteTarget._id || deleteTarget.id)) {
+        setsingleProjectId("");
+        setActiveProject(null);
+      }
+      setDeleteTarget(null);
+      await refreshProjects();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Delete failed");
+    } finally {
+      setDeleteBusy(false);
+    }
   };
 
   const getStatusColor = (status: Project["status"]) => {
@@ -217,7 +359,7 @@ export function TopBar({
                 className="fixed inset-0 z-40"
                 onClick={() => setShowProjectMenu(false)}
               />
-              <div className="absolute left-0 right-0 top-full z-50 mt-1.5 min-w-0 origin-top-left animate-fade-in-scale">
+              <div className="absolute left-0 top-full z-50 mt-1.5 w-[min(18.2rem,calc(100vw-1rem))] min-w-0 origin-top-left animate-fade-in-scale">
                 <div
                   className={cn(
                     "overflow-hidden rounded-lg border bg-popover text-popover-foreground",
@@ -256,56 +398,95 @@ export function TopBar({
                               (activeProject._id === project._id ||
                                 activeProject.id === project.id));
                           return (
-                            <li key={pid || project.id}>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  const projId = project._id ?? project.id;
-                                  setActiveProject(project);
-                                  loadProjectfiles(projId);
-                                  setShowProjectMenu(false);
-                                  setsingleProjectId(projId);
-                                  onOpenProject(
-                                    project.code,
-                                    project.code_language,
-                                    project.code_language === "html"
-                                      ? project.code
-                                      : "",
-                                  );
-                                  toast.info(`Switched to ${project.title}`);
-                                }}
-                                className={cn(
-                                  "flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors",
-                                  selected
-                                    ? "bg-muted/90 font-medium text-foreground dark:bg-white/[0.08]"
-                                    : "text-foreground/90 hover:bg-muted/50 dark:hover:bg-white/[0.05]",
-                                )}
-                              >
-                                <div
+                            <li key={pid || project.id} className="w-full">
+                              <div className="group relative flex w-full min-w-0 items-center gap-0.5">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const projId = project._id ?? project.id;
+                                    setActiveProject(project);
+                                    loadProjectfiles(projId);
+                                    setShowProjectMenu(false);
+                                    setsingleProjectId(projId);
+                                    onOpenProject(
+                                      project.code,
+                                      project.code_language,
+                                      project.code_language === "html"
+                                        ? project.code
+                                        : "",
+                                    );
+                                    toast.info(`Switched to ${project.title}`);
+                                  }}
                                   className={cn(
-                                    "mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full",
-                                    getStatusColor(project.status),
+                                    "flex min-w-0 flex-1 items-start gap-1.5 rounded-md pl-2 pr-1.5 py-1.5 text-left text-sm transition-colors",
+                                    selected
+                                      ? "bg-muted/90 font-medium text-foreground dark:bg-white/[0.08]"
+                                      : "text-foreground/90 hover:bg-muted/50 dark:hover:bg-white/[0.05]",
                                   )}
-                                  aria-hidden
-                                />
-                                <div className="min-w-0 flex-1">
-                                  <div className="truncate leading-tight">
-                                    {project.title}
-                                  </div>
-                                  <div className="mt-0.5 truncate text-[10px] capitalize text-muted-foreground">
-                                    {project.status}
-                                  </div>
-                                </div>
-                                {selected ? (
-                                  <Check
-                                    className="mt-0.5 h-4 w-4 shrink-0 text-primary"
-                                    strokeWidth={2.5}
+                                >
+                                  <div
+                                    className={cn(
+                                      "mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full",
+                                      getStatusColor(project.status),
+                                    )}
                                     aria-hidden
                                   />
-                                ) : (
-                                  <span className="w-4 shrink-0" aria-hidden />
-                                )}
-                              </button>
+                                  <div className="min-w-0 flex-1">
+                                    <div className="truncate leading-tight">
+                                      {project.title}
+                                    </div>
+                                    <div className="mt-0.5 truncate text-[10px] capitalize text-muted-foreground">
+                                      {project.status}
+                                    </div>
+                                  </div>
+                                  {selected ? (
+                                    <Check
+                                      className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary"
+                                      strokeWidth={2.5}
+                                      aria-hidden
+                                    />
+                                  ) : (
+                                    <span className="w-3.5 shrink-0" aria-hidden />
+                                  )}
+                                </button>
+
+                                <DropdownMenu>
+                                  <DropdownMenuTrigger asChild>
+                                    <button
+                                      type="button"
+                                      aria-label={`More options for ${project.title}`}
+                                      className={cn(
+                                        "flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-transparent text-[hsl(var(--muted-foreground))] transition-all duration-200",
+                                        "hover:bg-[hsl(var(--foreground)/0.06)] hover:text-[hsl(var(--foreground))]",
+                                        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--primary)/0.5)]",
+                                        "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
+                                      )}
+                                    >
+                                      <MoreHorizontal className="h-3.5 w-3.5" />
+                                    </button>
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent
+                                    align="end"
+                                    sideOffset={4}
+                                    className="w-44 border-[hsl(var(--foreground)/0.1)] bg-[hsl(var(--popover)/0.98)] text-[hsl(var(--popover-foreground))] backdrop-blur-xl"
+                                  >
+                                    <DropdownMenuItem
+                                      className="cursor-pointer gap-2 text-[hsl(var(--popover-foreground))] focus:bg-[hsl(var(--primary)/0.18)] focus:text-[hsl(var(--foreground))]"
+                                      onSelect={() => openRename(project)}
+                                    >
+                                      <Pencil className="h-4 w-4" />
+                                      Rename
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                      className="cursor-pointer gap-2 text-destructive focus:text-destructive"
+                                      onSelect={() => openDelete(project)}
+                                    >
+                                      <Trash2 className="h-4 w-4" />
+                                      Delete
+                                    </DropdownMenuItem>
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
+                              </div>
                             </li>
                           );
                         })}
@@ -668,6 +849,90 @@ export function TopBar({
       </div>
     </header>
     <UsageModal open={usageOpen} onClose={() => setUsageOpen(false)} isDark={isDark} />
+
+    {/* Rename Project Dialog */}
+    <Dialog open={!!renameTarget} onOpenChange={(open) => !open && setRenameTarget(null)}>
+      <DialogContent className="z-[110] overflow-hidden border-white/10 bg-[#101119]/95 text-zinc-100 backdrop-blur-xl sm:max-w-md">
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,hsl(var(--primary)/0.22),transparent_42%),linear-gradient(180deg,rgba(255,255,255,0.04),transparent_38%)]" />
+        <DialogHeader>
+          <div className="relative mb-1 flex items-center gap-3">
+            <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-[hsl(var(--primary)/0.18)] bg-[linear-gradient(135deg,hsl(var(--primary)/0.24),hsl(var(--primary)/0.12))] shadow-[0_12px_30px_hsl(var(--primary)/0.24)]">
+              <Pencil className="h-4 w-4 text-white" />
+            </div>
+            <div>
+              <DialogTitle className="text-xl text-white">Rename project</DialogTitle>
+              <DialogDescription className="mt-1 text-zinc-400">
+                Give this project a sharper, cleaner identity in your workspace.
+              </DialogDescription>
+            </div>
+          </div>
+        </DialogHeader>
+        <div className="relative mt-2 rounded-[26px] border border-white/10 bg-white/[0.045] p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]">
+          <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.24em] text-zinc-500">
+            New title
+          </p>
+          <Input
+            value={renameValue}
+            onChange={(event) => setRenameValue(event.target.value)}
+            placeholder="Project name"
+            onKeyDown={(event) => event.key === "Enter" && submitRename()}
+            className="h-12 rounded-2xl border-white/10 bg-[hsl(var(--background)/0.78)] text-base text-zinc-100 placeholder:text-zinc-500"
+          />
+          <div className="mt-3 flex items-center justify-between text-xs text-zinc-500">
+            <span className="truncate">Visible in your project list</span>
+            <span>{renameValue.trim().length}/60</span>
+          </div>
+        </div>
+        <DialogFooter className="gap-2 sm:gap-0">
+          <Button variant="outline" onClick={() => setRenameTarget(null)} className="border-white/10 bg-white/[0.03]">
+            Cancel
+          </Button>
+          <Button
+            onClick={submitRename}
+            disabled={renameBusy}
+            className="bg-[linear-gradient(135deg,hsl(var(--primary)),hsl(var(--primary)/0.88)_50%,hsl(var(--primary)/0.72))] text-[hsl(var(--primary-foreground))] shadow-[0_12px_30px_hsl(var(--primary)/0.28)] hover:opacity-95"
+          >
+            {renameBusy ? "Saving..." : "Save"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    {/* Delete Project Confirmation Dialog */}
+    <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+      <AlertDialogContent className="z-[110] overflow-hidden border-white/10 bg-[#101119]/95 text-zinc-100 backdrop-blur-xl">
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,hsl(var(--primary)/0.22),transparent_42%),linear-gradient(180deg,rgba(255,255,255,0.04),transparent_38%)]" />
+        <AlertDialogHeader>
+          <div className="relative mb-1 flex items-center gap-3">
+            <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-red-500/30 bg-red-500/10 shadow-[0_12px_30px_rgba(239,68,68,0.24)]">
+              <Trash2 className="h-4 w-4 text-red-400" />
+            </div>
+            <div>
+              <AlertDialogTitle className="text-xl text-white">Delete project</AlertDialogTitle>
+              <AlertDialogDescription className="mt-1 text-zinc-400">
+                Are you sure you want to delete <span className="text-foreground font-semibold">{deleteTarget?.title}</span>? This action cannot be undone.
+              </AlertDialogDescription>
+            </div>
+          </div>
+        </AlertDialogHeader>
+        <AlertDialogFooter className="gap-2 sm:gap-0">
+          <AlertDialogCancel asChild>
+            <Button variant="outline" className="border-white/10 bg-white/[0.03]">
+              Cancel
+            </Button>
+          </AlertDialogCancel>
+          <AlertDialogAction asChild>
+            <Button
+              onClick={submitDelete}
+              disabled={deleteBusy}
+              className="bg-red-600 text-white shadow-[0_12px_30px_rgba(239,68,68,0.28)] hover:bg-red-700"
+            >
+              {deleteBusy ? "Deleting..." : "Delete"}
+            </Button>
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
     </>
   );
 }

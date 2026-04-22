@@ -519,6 +519,112 @@ Entity Page pattern (replace Foo — loading/error/empty/data states required):
       : <div className="grid">{{items.map(item=><FooCard key={{item.id}} item={{item}} onDelete={{()=>{{if(window.confirm('Delete?'))remove(item.id)}}}} />)}}</div>}}
   </div>)
 
+═══ IMAGES & CONTENT DEPTH (mandatory — NO empty pages, NO placeholder text) ═══
+IMAGES — use ONLY these stable hotlinkable CDN sources (never local /assets paths, never lorem.space, never via.placeholder):
+• Unsplash direct:  https://images.unsplash.com/photo-<id>?w=1200&q=80&auto=format&fit=crop
+
+CRITICAL IMAGE-MATCHING RULE (read twice): the photo MUST depict the SPECIFIC product/subject, not the broad category. A "Mens Slim Jeans" card shows JEANS, not mountains. A "Leather Tote" shows A TOTE BAG, not a model's face. Pick the photo ID whose subject literally matches the item name. If nothing in the subject-specific list below fits, fall back to `https://picsum.photos/seed/<kebab-case-item-name>/800/1000` — NEVER reuse an unrelated Unsplash ID.
+
+SUBJECT-SPECIFIC UNSPLASH PHOTO IDS (pick by item name, not by broad category):
+Fashion — womens dresses: 1572804013309-59a88b7e92f1, 1595777457583-95e059d581b8, 1566174053879-31528523f8ae, 1515372039744-b8f02a3ae446, 1496747611176-843222e1e57c
+Fashion — womens tops/blouses: 1564257577-2d3ee8740faa, 1551048632-24e444b48a3e, 1485968579580-b6d095142e6e, 1445205170230-053b83016050
+Fashion — womens bottoms/skirts/pants: 1591369822096-ffd140ec948f, 1582418702059-97ebafb35d09, 1509551388413-e18d0ac5d495, 1594633312681-425c7b97ccd1
+Fashion — mens shirts: 1602810318383-e386cc2a3ccf, 1507003211169-0a1dd7228f2d, 1617137968427-85924c800a22, 1594938298603-c8148c4dae35
+Fashion — mens jeans/pants: 1542272604-787c3835535d, 1473966968600-fa801b869a1a, 1604176354204-9268737828e4, 1598554747436-c9293d6a588f
+Fashion — mens jackets/outerwear: 1551028719-00167b16eac5, 1521572163474-6864f9cf17ab, 1544022613-e87ca75a784a
+Fashion — shoes/sneakers: 1542291026-7eec264c27ff, 1600269452121-4f2416e55c28, 1595950653106-6c9ebd614d3a, 1549298916-b41d501d3772
+Fashion — heels/formal shoes: 1543163521-1bf539c55dd2, 1596703263926-eb0762ee17e4
+Fashion — handbags/totes: 1584917865442-de89df76afd3, 1548036328-c9fa89d128fa, 1590874103328-eac38a683ce7, 1566150905458-1bf1fc113f0d
+Fashion — watches/accessories: 1523275335684-37898b6baf30, 1587836374828-4dbafa94cf0e, 1619134778706-7015533a6150
+Fashion — jewelry/rings: 1605100804763-247f67b3557e, 1515562141207-7a88fb7ce338, 1611085583191-a3b181a88401
+Food — plated dish: 1565299624946-b28f40a0ae38, 1540189549336-e6e99c3679fe, 1567620905732-2d1ec7ab7445, 1551183053-bf91a1d81141
+Food — burger: 1568901346375-23c9450c58cd, 1571091718767-18b5b1457add, 1550547660-d9450f859349
+Food — pizza: 1513104890138-7c749659a591, 1565299543923-37dd37887442, 1574071318508-1cdbab80d002
+Food — pasta: 1551183053-bf91a1d81141, 1579684947550-22e945225d9a
+Food — dessert/cake: 1578985545062-69928b1d9587, 1551024506-0bccd828d307, 1565958011703-44f9829ba187
+Food — coffee/drinks: 1497636577773-f1231844b336, 1509042239860-f550ce710b93, 1461023058943-07fcbe16d735
+Food — restaurant interior: 1517248135467-4c7edcad34c4, 1414235077428-338989a2e8c0, 1552566626-52f8b828add9
+Tech — laptop/workspace: 1496171367470-9ed9a91ea931, 1517694712202-14dd9538aa97, 1498050108023-c5249f4df085
+Tech — phone/mobile: 1511707171634-5f897ff02aa9, 1580910051074-3eb694886505, 1512941937669-90a1b58e7e9c
+Tech — dashboard/code: 1551288049-bebda4e38f71, 1460925895917-afdab827c52f, 1504384308090-c894fdcc538d
+Real estate — modern house exterior: 1564013799919-ab600027ffc6, 1570129477492-45c003edd2be, 1605146769289-440113cc3d00
+Real estate — interior living room: 1560448204-e02f11c3d0e2, 1493809842364-78817add7ffb, 1600596542815-ffad4c1539a9
+Real estate — bedroom: 1540518614846-7eded433c457, 1522708323590-d24dbb6b0267
+Real estate — kitchen: 1556909114-f6e7ad7d3136, 1600489000022-c2086d79f9d4
+Fitness — gym/workout: 1571019613454-1cb2f99b2d8b, 1534438327276-14e5300c3a48, 1540497077202-7c8a3999166f
+Fitness — yoga: 1544367567-0f2fcb009e0b, 1518611012118-696072aa579a
+Travel — beach: 1507525428034-b723cf961d3e, 1506929562872-bb421503ef21, 1519046904884-53103b34b206
+Travel — mountains: 1506905925346-21bda4d32df4, 1464822759023-fed622ff2c3b
+Travel — city/urban: 1480714378408-67cf0d13bc1b, 1449824913935-59a10b8d2000, 1502602898657-3e91760cbb34
+Travel — hotel room: 1566073771259-6a8506099945, 1611892440504-42a792e24d32
+Beauty — skincare product: 1522335789203-aabd1fc54bc9, 1596462502278-27bfdc403348, 1571646034647-52e6ea84b28c
+Beauty — makeup: 1522335789203-aabd1fc54bc9, 1512496015851-a90fb38ba796
+Portrait — woman: 1494790108377-be9c29b29330, 1438761681033-6461ffad8d80, 1544005313-94ddf0286df2, 1580489944761-15a19d654956
+Portrait — man: 1500648767791-00dcc994a43e, 1472099645785-5658abf4ff4e, 1507003211169-0a1dd7228f2d, 1557862921-37829c790f19
+Construction — building/architecture exterior: 1486325252-7703622cc07d, 1504307651606-17fe770176a5, 1503387762-9ebc9d679ee5, 1587293852799-7b47ae1ac16d
+Construction — workers/crew: 1504307652892-f775a21af4b8, 1593642632315-9854154868a2, 1581092921801-8b3d028ab04e
+Construction — tools/equipment: 1572021566222-f09f7b7dab44, 1581578731548-c64695cc6952, 1530124566582-61068f2b0bb4
+Construction — interior renovation: 1556909114-f6e7ad7d3136, 1565182999-29c1de86caf5
+Healthcare — doctor/medical professional: 1559839734-2b71ea197ec2, 1622253692010-333f2da6031d, 1551190464-3b7d76e67d1f
+Healthcare — hospital/clinic interior: 1519494026892-551ede8d1aa6, 1576091160399-112ba8d25d1d
+Healthcare — medical equipment: 1530026405845-df8e1f30d8c1, 1581595220519-fffdf17d9551
+Automotive — car exterior: 1533473359331-0135ef1b58bf, 1544636331-9849d86f6392, 1494976388531-d1058494cdd8, 1552519507-da3b142c8872
+Automotive — car interior: 1503376780353-7e6692767b70, 1568605117036-5d671ed4a92a
+Automotive — motorcycle: 1558618666-fcd25c85cd64, 1449426468836-d651cf2d0cfe
+Education — classroom/lecture: 1580582932707-520aed937b7b, 1523050854058-8df90110c9f1, 1509062522246-51e89c3eda4c
+Education — students studying: 1522202176988-66273c73fd0f, 1488190211105-6d6ef81d5fe0, 1427504494785-3a9ca7044f45
+Education — books/library: 1481627834876-b7833e8f5570, 1507003211169-0a1dd7228f2d
+Corporate/business — office: 1497366216548-37526070297c, 1497366754035-d1776ef872fa, 1497366858526-6c0a4e87e1e0
+Corporate/business — team meeting: 1556761175-5519152f58e1, 1573497620402-b7a2fd58fbe3, 1551836022-8b2858c9c69b
+Corporate/business — city skyline: 1480714378408-67cf0d13bc1b, 1449824913935-59a10b8d2000
+Legal/professional — lawyer/desk: 1589216280-3eb4d76f10a4, 1593115130-b5b4d6c74234, 1521791055616-0d5bf477cc98
+Music/event — concert/stage: 1540039155194-d3d79d185d51, 1459749491-b7d364a2fd4f, 1493225457-6f37d4c0c396
+Music/event — musical instruments: 1511379938347-c526bd2a3538, 1507838153414-b1b74cfa24ac, 1558618047-3d52a93b8d0d
+Nature/environment — forest: 1441974231531-c6227db76b6e, 1448375240586-339fe90d6e2b, 1513836279014-a8bb3eb3d80d
+Nature/environment — ocean/sea: 1505118380757-91138143b06f, 1439405326049-6a3e18588b78
+Pets/animals — dog: 1587300003388-59208cc962cb, 1601758003122-7bc14b072ae8, 1517849845537-4df879b7f8c7
+Pets/animals — cat: 1514888286974-6c03e2ca1dba, 1543466835-00a7138329ea
+• Picsum seeded (always works): https://picsum.photos/seed/<slug>/1200/800 — use the product's kebab-case name as the seed (e.g. seed/silk-midi-dress/800/1000) so the SAME product always gets the SAME image.
+• FOR ANY DOMAIN NOT LISTED ABOVE: use Picsum with the item's exact kebab-case name as seed (e.g. "Excavator" → seed/excavator, "Medical CT Scanner" → seed/medical-ct-scanner). This guarantees each item gets a unique, consistent image even for niche domains not in the list above.
+• Avatars: https://i.pravatar.cc/150?img=<1-70> (use different img numbers for different team members)
+• Logos/brands row: use text logos in <span className="brand-logo"> with CSS, never try to load brand image files
+• Every <img> needs: src (from above), alt="descriptive text matching the subject", loading="lazy", className for sizing, object-fit:cover via CSS
+• NEVER repeat the same photo ID twice on one page. NEVER pick a landscape/scenery photo for a product card.
+
+CONTENT DEPTH — pages are NEVER a heading + one paragraph. Every page ships with real, rich, domain-specific content:
+• Product/Collection pages → 8-12 items minimum, each with image, name, price (realistic: $45-$2400), short description, category badge
+• Blog/Journal pages → 6-9 posts, each with image, title, author name, date, 2-3 sentence excerpt, category tag
+• Gallery/Lookbook pages → 10-14 images in a masonry or bento grid with captions
+• About page → hero image + story paragraphs + team grid (4-6 members with portrait, name, role, 1-sentence bio) + values grid (4 values) + timeline
+• Contact page → hero image + contact form (name, email, subject, message) + info cards (address, phone, email, hours) + map placeholder
+• Detail pages (product detail, post detail) → large image + gallery of 3-4 thumbnails + title + price + description (3-4 paragraphs) + specs/meta + related items (3-4 cards)
+• Home/Landing → hero with real background image or illustration + features (6 cards) + showcase/gallery (6-8 items) + testimonials (3 with avatar+name+role+quote) + CTA + footer with 4 columns of links
+• Pricing → 3 tier cards with feature lists (6-8 bullets each), highlighted middle tier, FAQ section (5-6 questions)
+
+MOCK DATA — SHARED SOURCE OF TRUTH (critical for detail pages to work):
+Create ONE file `frontend/src/data/mockData.ts` that exports ALL mock arrays + lookup helpers. List pages AND detail pages import from this SAME file so clicking a product card navigates to a detail page that actually finds the product.
+  // frontend/src/data/mockData.ts
+  export interface Product {{ id: string; slug: string; name: string; price: number; image: string; images?: string[]; category: string; description: string; }}
+  export const PRODUCTS: Product[] = [
+    {{ id:'1', slug:'silk-midi-dress', name:'Silk Midi Dress', price:1280, image:'https://images.unsplash.com/photo-1572804013309-59a88b7e92f1?w=800&q=80', category:'Dresses', description:'Hand-stitched silk with mother-of-pearl buttons.' }},
+    // ...8-12 items — each with a DIFFERENT subject-matching image and a unique kebab-case slug
+  ]
+  export const getProductBySlug = (slug: string) => PRODUCTS.find(p => p.slug === slug)
+  export const getProductById = (id: string) => PRODUCTS.find(p => p.id === id)
+  export const getRelatedProducts = (p: Product, n=4) => PRODUCTS.filter(x => x.category===p.category && x.id!==p.id).slice(0,n)
+  // Repeat the same pattern for other entities: POSTS + getPostBySlug, TEAM, TESTIMONIALS, etc.
+
+Pages import from this file:
+  import {{ PRODUCTS, getProductBySlug }} from '@/data/mockData'
+  const [items, setItems] = useState(PRODUCTS)  // immediate render, no blank page
+  useEffect(() => {{ api.get('/products').then(r => {{ if(r.data?.length) setItems(r.data) }}).catch(() => {{}}) }}, [])
+Detail page: const p = getProductBySlug(useParams().slug!) — NEVER "product not found" for a slug that exists in mockData.
+
+Links MUST use the same slug key: <Link to={{`/products/${{p.slug}}`}}>. Route: <Route path="/products/:slug" element={{<ProductDetailPage/>}} />.
+This guarantees the user ALWAYS sees a full page on first paint AND detail pages always render.
+
+COPY — every heading, body paragraph, button label, testimonial, feature card is SPECIFIC to the project's domain. No "Lorem ipsum", no "Description goes here", no "Feature 1/2/3", no "Click here".
+
 ═══ WEBSITE-FIRST DESIGN (when auth=false — ALL energy goes here) ═══
 When the project has no login/auth, the entire codebase budget goes to making the website breathtaking:
 • Hero section: full-viewport, stunning gradient background (mesh gradient or multi-stop), large bold headline, animated subtitle, clear CTA button with glow effect
@@ -590,6 +696,27 @@ When the project has no login/auth, the entire codebase budget goes to making th
 • models.py: use Optional[str] = None for nullable fields, datetime = Field(default_factory=datetime.utcnow)
 • config.py: use pydantic-settings BaseSettings, read from .env file
 • database.py: motor AsyncIOMotorClient, async connect_db() / disconnect_db() for lifespan events
+• CRITICAL — backend MUST start cleanly even if MongoDB is not running. Wrap MongoDB connection in try/except inside lifespan, log the error but let the app start. Routes that need the DB should check `if db is None: raise HTTPException(503, "Database unavailable")`. This way uvicorn binds the port and the frontend can still load.
+• main.py lifespan pattern (mandatory):
+    from contextlib import asynccontextmanager
+    db = None
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        global db
+        try:
+            client = AsyncIOMotorClient(settings.MONGODB_URL, serverSelectionTimeoutMS=3000)
+            await client.admin.command('ping')
+            db = client[settings.DB_NAME]
+            print("MongoDB connected")
+        except Exception as e:
+            print(f"MongoDB unavailable (frontend-only mode): {{e}}")
+            db = None
+        yield
+        if db is not None:
+            db.client.close()
+    app = FastAPI(lifespan=lifespan)
+• NEVER use @app.on_event("startup") — it is deprecated. Always use the lifespan context manager above.
+• requirements.txt MUST include: fastapi, uvicorn[standard], motor, pydantic-settings, python-jose[cryptography], bcrypt, python-multipart
 
 {specific_instructions}
 
@@ -610,6 +737,17 @@ Mentally scan every file you are about to generate and fix these before outputti
 □ Backend: login failure → 401, duplicate email → 409, not found → 404?
 □ Backend: main.py — every entity router registered with app.include_router()?
 □ Both: zero `pass`, `TODO`, `# implement`, empty function bodies?
+□ Frontend pages: every page file renders 6+ items/cards of real content — no page is just a heading?
+□ Frontend: list pages import from '@/data/mockData' (never redeclare mock arrays inline) and detail pages use getProductBySlug/getPostBySlug from the SAME file?
+□ Frontend: every <img> uses https://images.unsplash.com/photo-<id> or https://picsum.photos/seed/<slug> — never local paths?
+□ Frontend: every <img>'s photo subject MATCHES the item it represents (jeans card → jeans photo, NOT mountains; leather tote card → tote photo, NOT a face)?
+□ Frontend: no photo ID reused twice on the same page?
+□ Frontend: every <img> has alt, loading="lazy", and the parent has object-fit:cover in CSS?
+□ Frontend: every "Add to Cart" button calls useCartStore().addItem(product) — never a no-op?
+□ Frontend: every product/item card wrapped in <Link to={{`/products/${{item.slug}}`}}> using the slug field (not the id)?
+□ Frontend: App.tsx routes include <Route path="/products/:slug" element={{<ProductDetailPage/>}}> (or equivalent) and <Route path="/cart" element={{<CartPage/>}}>?
+□ Frontend: ProductDetailPage uses useParams().slug + getProductBySlug — and the slug values in mockData MATCH the slugs used in list-page Links?
+□ Frontend: every headline/paragraph/button label is specific to the project domain — no "Feature 1", no "Lorem ipsum"?
 Fix every failure before writing the output.
 
 ═══ OUTPUT FORMAT (strict) ═══
@@ -691,26 +829,43 @@ Full interface required:
 
     "main.py": """\
 MAIN.PY — file is at backend/main.py (NOT inside app/). CORS includes 5959. Register ALL entity routers.
+Use the lifespan context manager (NEVER @app.on_event which is deprecated). MongoDB connection MUST be
+wrapped in try/except so the app starts even if MongoDB is not running:
+
+  from contextlib import asynccontextmanager
   from fastapi import FastAPI
   from fastapi.middleware.cors import CORSMiddleware
-  from app.database import connect_db, disconnect_db
-  from app.routes import auth  # import every route module
+  from motor.motor_asyncio import AsyncIOMotorClient
+  from app.config import settings  # has MONGODB_URL and DB_NAME
+  import app.routes.auth as auth_router   # import every route module
 
-  app = FastAPI(title="...", version="1.0.0")
+  db = None
+
+  @asynccontextmanager
+  async def lifespan(application: FastAPI):
+      global db
+      try:
+          client = AsyncIOMotorClient(settings.MONGODB_URL, serverSelectionTimeoutMS=3000)
+          await client.admin.command("ping")
+          db = client[settings.DB_NAME]
+          print("[Backend] MongoDB connected")
+      except Exception as exc:
+          print(f"[Backend] MongoDB unavailable — starting in frontend-only mode: {{exc}}")
+          db = None
+      yield
+      if db is not None:
+          db.client.close()
+
+  app = FastAPI(title="...", version="1.0.0", lifespan=lifespan)
   app.add_middleware(CORSMiddleware,
-      allow_origins=["http://localhost:5959","http://localhost:5173","http://localhost:3000"],
+      allow_origins=["http://localhost:5959", "http://localhost:5173", "http://localhost:3000"],
       allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
-  @app.on_event("startup")
-  async def startup(): await connect_db()
-  @app.on_event("shutdown")
-  async def shutdown(): await disconnect_db()
-
-  app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
-  # include ALL entity routers here
+  app.include_router(auth_router.router, prefix="/api/auth", tags=["auth"])
+  # include ALL entity routers here with app.include_router(...)
 
   @app.get("/health")
-  async def health(): return {"status": "ok"}""",
+  async def health(): return {{"status": "ok", "db": db is not None}}""",
 
     "vite.config.ts": """\
 VITE CONFIG — port 5959, proxy /api → 7979, @/ path alias:
@@ -720,8 +875,9 @@ VITE CONFIG — port 5959, proxy /api → 7979, @/ path alias:
   export default defineConfig({
     plugins: [react()],
     resolve: { alias: { '@': path.resolve(__dirname, './src') } },
-    server: { port: 5959, proxy: { '/api': { target: 'http://localhost:7979', changeOrigin: true } } },
-  })""",
+    server: {{ port: 5959, host: '0.0.0.0', proxy: {{ '/api': {{ target: 'http://localhost:7979', changeOrigin: true }} }} }},
+    preview: {{ port: 5959, host: '0.0.0.0', strictPort: true, proxy: {{ '/api': {{ target: 'http://localhost:7979', changeOrigin: true }} }} }},
+  }})""",
 
     "HomePage.tsx": """\
 HOMEPAGE.TSX — stunning landing page, every button and interaction fully working:
@@ -745,7 +901,7 @@ HEROSECTION.TSX — the most important component, must be breathtaking:
   Headline: large (font-size: clamp(2.5rem, 6vw, 5rem)), bold, gradient-text class.
   Animated subtitle: typewriter or fade-in, muted color, 1.5rem.
   CTA buttons: primary (gradient background, box-shadow glow on hover), secondary (glass border).
-  Hero visual: stylized product mockup, dashboard screenshot, or abstract 3D-ish CSS art — NOT a placeholder image.
+  Hero visual: a REAL high-res image from Unsplash (https://images.unsplash.com/photo-<id>?w=1400&q=80) picked to match the project domain, wrapped in a container with glass border, subtle tilt, and floating gradient blobs behind it. Include <img loading="lazy" alt="..." /> — never leave the visual slot empty.
   Floating blobs: 3 absolutely positioned divs with border-radius: 50%, blur(80px), float animation, opacity 0.3.
   Stats row below: 3 numbers (e.g. "10K+ Users", "99.9% Uptime", "50+ Features") with animated count-up feel.
   Fully responsive: on mobile, visual stacks below text, font sizes scale down.""",
@@ -1353,6 +1509,110 @@ ENTITY STORE FILE — follow EXACT CRUD PATTERNS from the prompt above. Key requ
   • Import api from '@/services/api' or '../../services/api'
   • API path: use '/entities' (plural, matches backend router prefix minus /api)""",
 
+    "_website_page": """\
+WEBSITE PAGE FILE (no-auth project) — NEVER a sparse heading-only page. Ship a full-depth landing-style page:
+  IMPORT mock data from shared file (NEVER redeclare arrays inline — detail pages must see the SAME data):
+    import {{ PRODUCTS, POSTS }} from '@/data/mockData'   // pick whichever entity matches this page
+  const [items, setItems] = useState(PRODUCTS)           // immediate render — page is never blank
+  useEffect(() => {{ api.get('/<entity>').then(r => {{ if(r.data?.length) setItems(r.data) }}).catch(() => {{}}) }}, [])
+  Render order on the page:
+    1. Page header with large serif/display heading + descriptive subtitle (2 sentences of real copy specific to this domain)
+    2. Optional featured/hero image (large unsplash photo) OR filter bar (category chips with working setCategory state)
+    3. Responsive grid (md:grid-cols-2 lg:grid-cols-3) of cards — every card has <img loading="lazy">, title, category/meta, excerpt, hover lift, wrapped in <Link to={{`/products/${{item.slug}}`}}> (uses item.slug — MUST match mockData slug field)
+    4. Secondary section (e.g. newsletter signup, testimonial row, or CTA banner) — NEVER end the page with just the grid alone
+  All <button> and <Link> elements wired up:
+    - "Add to Cart" → useCartStore().addItem(item)  +  toast('Added to cart')
+    - "View Details" / card click → <Link to={{`/products/${{item.slug}}`}}>
+    - "Load More" → setVisible(v => v+6) or similar real state change
+  No dead anchors, no empty onClick={{() => {{}}}}, no href="#" without a handler.
+  Plain JSX with key={{item.id}} on the root of each mapped child. No ReactMarkdown.""",
+
+    "_product_detail_page": """\
+PRODUCT/ITEM DETAIL PAGE — the click target from a list page. MUST render a real product, NEVER "product not found" for a valid slug.
+  import {{ useParams, Link, useNavigate }} from 'react-router-dom'
+  import {{ getProductBySlug, getRelatedProducts }} from '@/data/mockData'
+  import {{ useCartStore }} from '@/stores/cartStore'
+  export default function ProductDetailPage() {{
+    const {{ slug }} = useParams<{{slug: string}}>()
+    const product = slug ? getProductBySlug(slug) : undefined
+    const addItem = useCartStore(s => s.addItem)
+    const [qty, setQty] = useState(1)
+    const [activeImg, setActiveImg] = useState(0)
+    if (!product) return <div className="container py-20 text-center"><h1>Product not found</h1><Link to="/products" className="btn-primary mt-6 inline-block">Back to collection</Link></div>
+    const images = product.images?.length ? product.images : [product.image]
+    const related = getRelatedProducts(product)
+    return ( /* JSX below */ )
+  }}
+  Layout (desktop 2-col, mobile stacked):
+    LEFT: large main image (activeImg) + 3-4 thumbnail row that switches activeImg on click (hover ring, active ring-primary)
+    RIGHT: breadcrumb (Home / Category / Name) → category badge → product name (serif H1) → price ($X.XX, big) → description (3-4 paragraphs real copy) → qty stepper (− n +) → Add to Cart button (onClick: addItem(product, qty); toast) → Buy Now button (navigate('/cart')) → accordions: Details, Shipping, Returns (real content, not lorem)
+  BELOW: "You may also like" section — grid of related products, each <Link to={{`/products/${{r.slug}}`}}>.
+  Theme: reuse the SAME color palette, fonts, and button classes as the list page — never invent new styles here.""",
+
+    "cartStore.ts": """\
+CARTSTORE.TS — Zustand cart store with localStorage persist. All cart buttons across the app call THIS store — no prop drilling, no local useState carts.
+  import {{ create }} from 'zustand'
+  import {{ persist }} from 'zustand/middleware'
+  export interface CartItem {{ id: string; slug: string; name: string; price: number; image: string; quantity: number; }}
+  interface CartState {{
+    items: CartItem[]
+    addItem: (product: {{id:string; slug:string; name:string; price:number; image:string}}, qty?: number) => void
+    removeItem: (id: string) => void
+    updateQuantity: (id: string, qty: number) => void
+    clearCart: () => void
+    totalItems: () => number
+    subtotal: () => number
+  }}
+  export const useCartStore = create<CartState>()(persist((set, get) => ({{
+    items: [],
+    addItem: (p, qty=1) => set(s => {{
+      const existing = s.items.find(i => i.id === p.id)
+      if (existing) return {{ items: s.items.map(i => i.id===p.id ? {{...i, quantity: i.quantity+qty}} : i) }}
+      return {{ items: [...s.items, {{ ...p, quantity: qty }}] }}
+    }}),
+    removeItem: (id) => set(s => ({{ items: s.items.filter(i => i.id !== id) }})),
+    updateQuantity: (id, qty) => set(s => ({{
+      items: qty <= 0 ? s.items.filter(i => i.id !== id) : s.items.map(i => i.id===id ? {{...i, quantity: qty}} : i)
+    }})),
+    clearCart: () => set({{ items: [] }}),
+    totalItems: () => get().items.reduce((n, i) => n + i.quantity, 0),
+    subtotal: () => get().items.reduce((s, i) => s + i.price * i.quantity, 0),
+  }}), {{ name: 'cart-storage' }}))
+Every "Add to Cart" button anywhere: onClick={{() => useCartStore.getState().addItem(product)}} (or grab addItem from the hook).
+Navbar cart icon: shows useCartStore(s => s.totalItems()) as a badge, Link to /cart.""",
+
+    "CartPage.tsx": """\
+CARTPAGE.TSX — full cart review page. Reads from useCartStore, renders items or empty state.
+  import {{ Link, useNavigate }} from 'react-router-dom'
+  import {{ useCartStore }} from '@/stores/cartStore'
+  export default function CartPage() {{
+    const {{ items, removeItem, updateQuantity, clearCart, subtotal }} = useCartStore()
+    const nav = useNavigate()
+    if (items.length === 0) return <div className="container py-20 text-center"><h1>Your cart is empty</h1><Link to="/products" className="btn-primary mt-6 inline-block">Continue shopping</Link></div>
+    return ( /* 2-col layout: left=items list, right=summary */ )
+  }}
+  Left col: each cart item row — thumbnail, name (Link to `/products/${{item.slug}}`), price, qty stepper (calls updateQuantity), remove button (calls removeItem), line total.
+  Right col: Order Summary card — subtotal, shipping ("Free over $100"), estimated tax (8%), total. "Checkout" button (alerts "Demo checkout" or navigates to /checkout if route exists), "Clear Cart" text button.
+  Theme: same colors/fonts/buttons as the rest of the site.""",
+
+    "mockData.ts": """\
+MOCKDATA.TS — single source of truth for ALL hard-coded content used by list + detail pages.
+Define interface + exported array + lookup helpers for EACH entity this project has (products, posts, team, testimonials, etc.).
+Example shape (adapt entity names to the project):
+  export interface Product {{ id: string; slug: string; name: string; price: number; image: string; images?: string[]; category: string; description: string; features?: string[]; }}
+  export const PRODUCTS: Product[] = [
+    {{ id: '1', slug: 'silk-midi-dress', name: 'Silk Midi Dress', price: 1280, image: 'https://images.unsplash.com/photo-1572804013309-59a88b7e92f1?w=800&q=80', images: [ /* 3-4 different angles, each a DIFFERENT unsplash id of dresses */ ], category: 'Dresses', description: 'Full 2-3 paragraph product description with real detail — fabric composition, construction, care. No lorem.', features: ['100% mulberry silk','Hand-finished seams','Made in Italy'] }},
+    // ...10-12 items total, each with UNIQUE slug and subject-matching image
+  ]
+  export const getProductBySlug = (slug: string) => PRODUCTS.find(p => p.slug === slug)
+  export const getRelatedProducts = (p: Product, n=4) => PRODUCTS.filter(x => x.category === p.category && x.id !== p.id).slice(0, n)
+
+HARD RULES:
+1. Every item has a unique `slug` (kebab-case). List-page Links use `/products/${{item.slug}}`. Detail page looks up by slug via getProductBySlug.
+2. Images MUST match item subject — see IMAGES rule above. A "Leather Tote" MUST use a handbag photo ID, not a landscape.
+3. NEVER redeclare these arrays inside page components — always import from '@/data/mockData'.
+4. Realistic pricing for the domain (fashion $45-$2400, food $8-$45, SaaS $9-$499, etc.).""",
+
     "_entity_page": """\
 ENTITY PAGE FILE — complete CRUD page with all states:
   • Import store hook, LoadingSpinner, EmptyState, Button from correct relative paths
@@ -1522,7 +1782,15 @@ def _get_specific_instructions(file_paths: list[str], auth: bool = True) -> str:
                 instructions.append(instruction)
                 seen.add(key)
             # Pattern: entity pages (not login/register/dashboard/home)
-            elif k == "_entity_page" and re.search(r'frontend/src/pages/(?!login|register|dashboard|home)\w+[Pp]age\.tsx$', p):
+            elif k == "_entity_page" and auth and re.search(r'frontend/src/pages/(?!login|register|dashboard|home)\w+[Pp]age\.tsx$', p):
+                instructions.append(instruction)
+                seen.add(key)
+            # Pattern: website pages (no-auth projects) — any page file except Home/Cart/ProductDetail (those have own instructions)
+            elif k == "_website_page" and (not auth) and re.search(r'frontend/src/pages/(?!home|cart|.*detail)\w+[Pp]age\.tsx$', p):
+                instructions.append(instruction)
+                seen.add(key)
+            # Pattern: product/item detail pages (any project) — files like ProductDetailPage.tsx, ItemDetailPage.tsx, PostDetailPage.tsx
+            elif k == "_product_detail_page" and re.search(r'frontend/src/pages/\w*detail\w*page\.tsx$', p):
                 instructions.append(instruction)
                 seen.add(key)
             # Pattern: entity service files
@@ -1587,6 +1855,51 @@ class OrchestratorAgent:
             n_be = len(spec.get("backend_files", []))
             n_fe = len(spec.get("frontend_files", []))
             print(f"[Orchestrator] Planned {n_be} backend + {n_fe} frontend files")
+            # Guarantee essential entry-point files are always present
+            _fe_paths = {f["path"] for f in spec.get("frontend_files", [])}
+            _essential_fe = [
+                {"path": "frontend/index.html", "description": "HTML entry point — id='root', script src=/src/main.tsx"},
+                {"path": "frontend/src/main.tsx", "description": "ReactDOM.createRoot('#root') entry"},
+            ]
+            _is_website = not spec.get("auth", True)
+            # Detect commerce/catalog intent from user message + planned files
+            _commerce_blob = (user_message + " " + " ".join(_fe_paths)).lower()
+            _is_commerce = any(w in _commerce_blob for w in (
+                "shop", "store", "ecommerce", "e-commerce", "product", "cart",
+                "checkout", "catalog", "collection", "boutique", "menu", "restaurant",
+                "apparel", "fashion", "clothing", "furniture", "marketplace"
+            ))
+            # Shared mock data file for ALL website-first projects (so list + detail pages share data)
+            if _is_website:
+                _essential_fe.append({
+                    "path": "frontend/src/data/mockData.ts",
+                    "description": "Single source of truth for all mock arrays (PRODUCTS/POSTS/TEAM/etc.) + lookup helpers (getBySlug, getRelated). List pages AND detail pages import from here."
+                })
+            # Cart store + cart page + product detail page for commerce-like sites
+            if _is_website and _is_commerce:
+                _fe_paths_lower = {p.lower() for p in _fe_paths}
+                _has_cart_store = any("cartstore" in p for p in _fe_paths_lower)
+                _has_cart_page = any("cartpage" in p for p in _fe_paths_lower)
+                _has_detail_page = any("detailpage" in p for p in _fe_paths_lower)
+                if not _has_cart_store:
+                    _essential_fe.append({
+                        "path": "frontend/src/stores/cartStore.ts",
+                        "description": "Zustand cart store with persist middleware: items, addItem, removeItem, updateQuantity, clearCart, totalItems, subtotal. Used by Add-to-Cart buttons site-wide."
+                    })
+                if not _has_cart_page:
+                    _essential_fe.append({
+                        "path": "frontend/src/pages/CartPage.tsx",
+                        "description": "Cart review page — reads useCartStore, renders items list + order summary, or empty-state with link to /products."
+                    })
+                if not _has_detail_page:
+                    _essential_fe.append({
+                        "path": "frontend/src/pages/ProductDetailPage.tsx",
+                        "description": "Product detail page — useParams().slug → getProductBySlug from mockData, renders gallery + info + add-to-cart (uses cartStore) + related products. Route: /products/:slug"
+                    })
+            for ef in _essential_fe:
+                if ef["path"] not in _fe_paths:
+                    spec.setdefault("frontend_files", []).insert(0, ef)
+                    print(f"[Orchestrator] Injected missing essential file: {ef['path']}")
             # Store developer_plan contracts in spec for file generation context
             if developer_plan:
                 spec["_interfaces"] = developer_plan.get("interfaces", [])
