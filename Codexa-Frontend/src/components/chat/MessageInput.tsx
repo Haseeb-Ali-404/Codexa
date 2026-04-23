@@ -458,7 +458,7 @@ export function MessageInput({
 
   return (
     <div className="sticky bottom-0 z-20">
-      <div className="pointer-events-none flex justify-center px-3 sm:px-4 md:px-5 pb-3">
+      <div className="pointer-events-none flex justify-center px-3 sm:px-4 md:px-5 pb-4">
         <div className="pointer-events-auto flex w-full max-w-[900px] flex-col gap-2">
           {hasAttachments && (
             <div
@@ -514,7 +514,7 @@ export function MessageInput({
             className={cn(
               "relative flex items-center gap-2 px-2.5 py-2",
               hasAttachments ? "rounded-2xl" : "rounded-full",
-              "bg-[hsl(var(--chat-surface)/0.92)] border-[hsl(var(--chat-surface-border)/0.9)] shadow-md shadow-black/10 ring-1 ring-black/5 dark:ring-white/5 backdrop-blur-md",
+              "bg-[hsl(var(--foreground)/0.075)] border-[hsl(var(--foreground)/0.14)] shadow-lg shadow-black/15 ring-1 ring-black/5 dark:bg-[hsl(var(--foreground)/0.09)] dark:ring-white/8 backdrop-blur-md",
               "transition-all duration-200",
               isFocused
                 ? "ring-2 ring-primary/25 shadow-md shadow-primary/10"

@@ -366,16 +366,17 @@ export function Sidebar({ isOpen, onToggle, onSettingsClick }: SidebarProps) {
                   onClick={isOpen ? handleNewChat : onToggle}
                   aria-label={isOpen ? "Go to chats home" : "Expand sidebar"}
                   className={cn(
-                    "group relative flex shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-white/12",
-                    "h-10 w-10 border-[hsl(var(--foreground)/0.1)] bg-[linear-gradient(145deg,hsl(var(--primary)/0.28),hsl(var(--primary)/0.14))]",
-                    "shadow-[0_0_0_1px_rgba(255,255,255,0.03),0_12px_30px_hsl(var(--primary)/0.3)]",
-                    "transition-all duration-300 ease-out hover:scale-[1.03] hover:shadow-[0_0_0_1px_rgba(255,255,255,0.05),0_16px_36px_hsl(var(--primary)/0.38)]",
+                    "group relative flex shrink-0 items-center justify-center overflow-hidden rounded-2xl border",
+                    "h-9 w-9 border-[hsl(var(--primary)/0.18)] bg-[linear-gradient(145deg,hsl(var(--primary)/0.26),hsl(var(--primary)/0.12))]",
+                    "ring-1 ring-white/70 shadow-[0_10px_26px_hsl(var(--primary)/0.18)]",
+                    "dark:border-white/12 dark:ring-white/5 dark:shadow-[0_0_0_1px_rgba(255,255,255,0.03),0_8px_22px_hsl(var(--primary)/0.26)]",
+                    "transition-all duration-300 ease-out hover:scale-[1.03] hover:shadow-[0_14px_30px_hsl(var(--primary)/0.24)] dark:hover:shadow-[0_0_0_1px_rgba(255,255,255,0.05),0_16px_36px_hsl(var(--primary)/0.38)]",
                     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--primary)/0.7)] focus-visible:ring-offset-2 focus-visible:ring-offset-[hsl(var(--sidebar-background))]",
                     "active:scale-[0.97]",
                   )}
                   >
                     <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_30%,rgba(255,255,255,0.32),transparent_38%)] opacity-80 transition-opacity duration-300 group-hover:opacity-100" />
-                    <Sparkles className="relative h-4.5 w-4.5 text-white transition-transform duration-300 group-hover:scale-110 group-hover:rotate-6" />
+                    <Sparkles className="relative h-4 w-4 text-white transition-transform duration-300 group-hover:scale-110 group-hover:rotate-6" />
                   </button>
               </TooltipTrigger>
               <TooltipContent side="right">{isOpen ? "All chats" : "Expand sidebar"}</TooltipContent>
@@ -410,18 +411,18 @@ export function Sidebar({ isOpen, onToggle, onSettingsClick }: SidebarProps) {
                   onClick={handleNewChat}
                   className={cn(
                     "group relative flex w-full items-center overflow-hidden rounded-full border",
-                    "h-12 border-[hsl(var(--primary)/0.18)] bg-[linear-gradient(135deg,hsl(var(--primary)),hsl(var(--primary)/0.88)_45%,hsl(var(--primary)/0.72))] px-4 text-sm font-medium text-[hsl(var(--primary-foreground))]",
-                    "shadow-[0_10px_28px_hsl(var(--primary)/0.34)] transition-all duration-300 ease-out",
+                    "h-10 border-[hsl(var(--primary)/0.18)] bg-[linear-gradient(135deg,hsl(var(--primary)),hsl(var(--primary)/0.88)_45%,hsl(var(--primary)/0.72))] px-3.5 text-sm font-medium text-[hsl(var(--primary-foreground))]",
+                    "shadow-[0_8px_22px_hsl(var(--primary)/0.3)] transition-all duration-300 ease-out",
                     "hover:-translate-y-0.5 hover:shadow-[0_14px_36px_hsl(var(--primary)/0.38)]",
                     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--primary)/0.7)] focus-visible:ring-offset-2 focus-visible:ring-offset-[hsl(var(--sidebar-background))]",
                     "active:scale-[0.985]",
-                    isOpen ? "justify-between" : "h-10 w-10 justify-center rounded-2xl px-0",
+                    isOpen ? "justify-between" : "h-9 w-9 justify-center rounded-2xl px-0",
                   )}
                 >
                   <div className="absolute inset-0 bg-[linear-gradient(120deg,transparent,rgba(255,255,255,0.12),transparent)] opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
                   <div className="flex items-center gap-2.5">
-                    <span className="flex h-7 w-7 items-center justify-center rounded-full bg-white/14 shadow-inner shadow-white/10">
-                      <Plus className="h-4 w-4 transition-transform duration-300 group-hover:rotate-90" />
+                    <span className="flex h-6 w-6 items-center justify-center rounded-full bg-white/14 shadow-inner shadow-white/10">
+                      <Plus className="h-3.5 w-3.5 transition-transform duration-300 group-hover:rotate-90" />
                     </span>
                     {isOpen && <span>New Chat</span>}
                   </div>
@@ -439,14 +440,14 @@ export function Sidebar({ isOpen, onToggle, onSettingsClick }: SidebarProps) {
           {isOpen && (
             <div className="mt-3.5">
               <div className="group relative">
-                <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[hsl(var(--muted-foreground))] transition-colors duration-200 group-focus-within:text-[hsl(var(--primary))]" />
+                <Search className="pointer-events-none absolute left-3.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[hsl(var(--muted-foreground))] transition-colors duration-200 group-focus-within:text-[hsl(var(--primary))]" />
                 <Input
                   type="text"
                   placeholder="Search chats"
                   value={searchQuery}
                   onChange={(event) => setSearchQuery(event.target.value)}
                   className={cn(
-                    "h-11 rounded-full border border-[hsl(var(--foreground)/0.1)] bg-[hsl(var(--foreground)/0.04)] pl-10 pr-10 text-sm text-[hsl(var(--foreground))] shadow-[inset_0_1px_0_hsl(var(--foreground)/0.04)]",
+                    "h-10 rounded-full border border-[hsl(var(--foreground)/0.1)] bg-[hsl(var(--foreground)/0.04)] pl-9 pr-9 text-sm text-[hsl(var(--foreground))] shadow-[inset_0_1px_0_hsl(var(--foreground)/0.04)]",
                     "placeholder:text-[hsl(var(--muted-foreground))] focus-visible:border-[hsl(var(--primary)/0.5)] focus-visible:ring-2 focus-visible:ring-[hsl(var(--primary)/0.25)]",
                   )}
                 />
@@ -506,7 +507,7 @@ export function Sidebar({ isOpen, onToggle, onSettingsClick }: SidebarProps) {
                       "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--primary)/0.5)] focus-visible:ring-offset-2 focus-visible:ring-offset-[hsl(var(--sidebar-background))]",
                       isOpen ? "min-h-[46px]" : "justify-center px-1.5",
                       isActive
-                        ? "bg-[linear-gradient(90deg,hsl(var(--primary)/0.22),hsl(var(--primary)/0.1)_44%,transparent)] shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]"
+                        ? "border border-[hsl(var(--primary)/0.16)] bg-[linear-gradient(90deg,hsl(var(--primary)/0.18),hsl(var(--primary)/0.08)_44%,rgba(255,255,255,0.75))] shadow-[0_10px_24px_hsl(var(--primary)/0.08),inset_0_1px_0_rgba(255,255,255,0.3)] dark:border-transparent dark:bg-[linear-gradient(90deg,hsl(var(--primary)/0.22),hsl(var(--primary)/0.1)_44%,transparent)] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]"
                         : "bg-transparent hover:bg-[hsl(var(--foreground)/0.05)] hover:translate-x-1",
                     )}
                   >
@@ -514,7 +515,7 @@ export function Sidebar({ isOpen, onToggle, onSettingsClick }: SidebarProps) {
                       className={cn(
                         "absolute bottom-1.5 left-0 top-1.5 w-[3px] rounded-full transition-all duration-200",
                         isActive
-                          ? "bg-[linear-gradient(180deg,hsl(var(--primary)),hsl(var(--primary)/0.7),hsl(var(--primary)))] shadow-[0_0_18px_hsl(var(--primary)/0.65)]"
+                          ? "bg-[linear-gradient(180deg,hsl(var(--primary)),hsl(var(--primary)/0.78),hsl(var(--primary)))] shadow-[0_0_16px_hsl(var(--primary)/0.42)] dark:shadow-[0_0_18px_hsl(var(--primary)/0.65)]"
                           : "bg-transparent group-hover/item:bg-[hsl(var(--primary)/0.3)]",
                       )}
                     />
@@ -523,7 +524,7 @@ export function Sidebar({ isOpen, onToggle, onSettingsClick }: SidebarProps) {
                       className={cn(
                         "flex h-8 w-8 shrink-0 items-center justify-center rounded-2xl text-[13px] font-semibold uppercase transition-all duration-200",
                         isActive
-                          ? "bg-[hsl(var(--primary)/0.14)] text-[hsl(var(--primary-foreground))]"
+                          ? "bg-[hsl(var(--primary)/0.16)] text-[hsl(var(--primary-foreground))] shadow-[inset_0_1px_0_rgba(255,255,255,0.28)] dark:shadow-none"
                           : "bg-[hsl(var(--foreground)/0.05)] text-[hsl(var(--muted-foreground))] group-hover/item:bg-[hsl(var(--foreground)/0.08)] group-hover/item:text-[hsl(var(--foreground))]",
                       )}
                     >
@@ -587,7 +588,7 @@ export function Sidebar({ isOpen, onToggle, onSettingsClick }: SidebarProps) {
                               Share
                             </DropdownMenuItem>
                             <DropdownMenuItem
-                              className="cursor-pointer gap-2 text-destructive focus:text-destructive"
+                              className="cursor-pointer gap-2 text-destructive transition-colors focus:bg-destructive/15 focus:text-destructive data-[highlighted]:bg-destructive/15 data-[highlighted]:text-destructive"
                               onSelect={() => openDelete(chat)}
                             >
                               <Trash2 className="h-4 w-4" />

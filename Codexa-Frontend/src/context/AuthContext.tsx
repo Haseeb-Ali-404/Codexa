@@ -10,16 +10,14 @@ interface AuthContextType {
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
+const emptyUser = { name: null, email: null };
 
 export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   
   const [token, setTokenState] = useState<string | null>(
     localStorage.getItem("token")
   );
-  const [user, setUser] = useState({
-    name: null,
-    email: null,
-  });
+  const [user, setUser] = useState(emptyUser);
 
   const [userId, setUserId] = useState<string | null>(null);
 
@@ -31,6 +29,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       setUser(decoded);
       return decoded.user_id || null; // "sub" contains user_id
     } catch {
+      setUser(emptyUser);
       return null;
     }
   };
@@ -45,6 +44,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       localStorage.removeItem("token");
       setTokenState(null);
       setUserId(null);
+      setUser(emptyUser);
     }
   };
 
@@ -53,6 +53,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     localStorage.removeItem("token");
     setTokenState(null);
     setUserId(null);
+    setUser(emptyUser);
   };
 
   // Decode token on initial load

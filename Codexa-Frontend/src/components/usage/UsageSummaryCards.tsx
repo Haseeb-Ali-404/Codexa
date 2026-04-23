@@ -10,7 +10,7 @@ interface UsageSummaryCardsProps {
 }
 
 const cardBase =
-  "relative overflow-hidden rounded-2xl border p-5 shadow-sm transition-shadow duration-300 hover:shadow-md";
+  "group relative min-h-[132px] overflow-hidden rounded-3xl border p-5 shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-xl";
 
 export function UsageSummaryCards({ totals, isDark }: UsageSummaryCardsProps) {
   const cards = [
@@ -23,6 +23,8 @@ export function UsageSummaryCards({ totals, isDark }: UsageSummaryCardsProps) {
         : "from-cyan-500/15 via-cyan-500/5 to-transparent",
       border: isDark ? "border-cyan-500/20" : "border-cyan-500/25",
       iconClass: "text-cyan-500",
+      glow: "group-hover:shadow-cyan-500/15",
+      bar: "from-cyan-400 to-cyan-600",
     },
     {
       label: "Total tokens",
@@ -34,6 +36,8 @@ export function UsageSummaryCards({ totals, isDark }: UsageSummaryCardsProps) {
         : "from-violet-500/15 via-violet-500/5 to-transparent",
       border: isDark ? "border-violet-500/20" : "border-violet-500/25",
       iconClass: "text-violet-500",
+      glow: "group-hover:shadow-violet-500/15",
+      bar: "from-violet-400 to-indigo-500",
     },
     {
       label: "Estimated cost",
@@ -45,6 +49,8 @@ export function UsageSummaryCards({ totals, isDark }: UsageSummaryCardsProps) {
         : "from-emerald-500/15 via-emerald-500/5 to-transparent",
       border: isDark ? "border-emerald-500/20" : "border-emerald-500/25",
       iconClass: "text-emerald-500",
+      glow: "group-hover:shadow-emerald-500/15",
+      bar: "from-emerald-400 to-teal-500",
     },
   ];
 
@@ -55,11 +61,13 @@ export function UsageSummaryCards({ totals, isDark }: UsageSummaryCardsProps) {
           key={c.label}
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: i * 0.06, duration: 0.35 }}
+          whileHover={{ scale: 1.01 }}
+          transition={{ delay: i * 0.06, duration: 0.35, ease: "easeOut" }}
           className={cn(
             cardBase,
-            "bg-card/80 backdrop-blur-sm",
+            "bg-card/75 backdrop-blur-xl",
             c.border,
+            c.glow,
           )}
         >
           <div
@@ -68,10 +76,12 @@ export function UsageSummaryCards({ totals, isDark }: UsageSummaryCardsProps) {
               c.gradient,
             )}
           />
+          <div className="pointer-events-none absolute inset-x-5 top-0 h-px bg-gradient-to-r from-transparent via-white/35 to-transparent opacity-70" />
+          <div className="pointer-events-none absolute -right-10 -top-10 h-28 w-28 rounded-full bg-white/[0.06] blur-2xl transition-opacity duration-300 group-hover:opacity-100 opacity-60" />
           <div className="relative flex items-start gap-4">
             <div
               className={cn(
-                "flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-background/60 dark:bg-white/5 ring-1 ring-border/60",
+                "flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-background/65 dark:bg-white/[0.06] ring-1 ring-border/60 shadow-inner shadow-white/5 transition-transform duration-300 group-hover:scale-105",
               )}
             >
               <c.icon className={cn("h-5 w-5", c.iconClass)} />
@@ -87,6 +97,14 @@ export function UsageSummaryCards({ totals, isDark }: UsageSummaryCardsProps) {
                 <p className="mt-0.5 text-xs text-muted-foreground">{c.sub}</p>
               ) : null}
             </div>
+          </div>
+          <div className="absolute inset-x-5 bottom-4 h-1 overflow-hidden rounded-full bg-foreground/5">
+            <motion.div
+              initial={{ width: 0 }}
+              animate={{ width: "72%" }}
+              transition={{ delay: 0.18 + i * 0.08, duration: 0.7, ease: "easeOut" }}
+              className={cn("h-full rounded-full bg-gradient-to-r", c.bar)}
+            />
           </div>
         </motion.div>
       ))}

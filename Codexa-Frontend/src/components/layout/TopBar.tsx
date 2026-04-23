@@ -26,6 +26,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
+import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import { useAppData } from "@/context/useAppData";
 import { useChatSearch } from "@/context/ChatSearchContext";
@@ -110,7 +111,8 @@ export function TopBar({
   const [searchFocused, setSearchFocused] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [usageOpen, setUsageOpen] = useState(false);
-  const { user, userId } = useAuth();
+  const navigate = useNavigate();
+  const { user, userId, logout } = useAuth();
 
   const {
     userProjects,
@@ -293,13 +295,11 @@ export function TopBar({
       <div className="flex min-w-0 flex-[1_1_0%] items-center gap-2 sm:gap-3 md:gap-4 max-w-[min(100%,14rem)] sm:max-w-[18rem] md:max-w-[20rem] lg:max-w-[22rem] xl:max-w-[24rem]">
         {/* Logo */}
         <div className="flex items-center gap-2.5 group cursor-pointer">
-          <div className="relative">
-            <img 
-              src="/logo.png" 
-              alt="Codexa Logo" 
-              className="w-10 h-10 rounded-xl shadow-md shadow-primary/25 transition-all duration-200 group-hover:scale-105 group-hover:shadow-primary/40 object-contain border-2 border-white/30"
-            />
-            <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-emerald-500/90 border-2 border-background" />
+          <div
+            aria-hidden="true"
+            className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-[9px] bg-[linear-gradient(135deg,hsl(var(--primary)),#4f46e5)] shadow-[0_0_20px_hsl(var(--primary)/0.5)] transition-transform duration-200 group-hover:scale-105"
+          >
+            <Sparkles className="h-[18px] w-[18px] text-white" />
           </div>
           <div className="hidden sm:flex flex-col">
             <span className="font-bold text-base leading-tight tracking-tight bg-gradient-to-r from-foreground via-foreground to-primary bg-clip-text text-transparent transition-all duration-200 group-hover:drop-shadow-[0_0_10px_rgba(124,58,237,0.35)]">
@@ -359,7 +359,7 @@ export function TopBar({
                 className="fixed inset-0 z-40"
                 onClick={() => setShowProjectMenu(false)}
               />
-              <div className="absolute left-0 top-full z-50 mt-1.5 w-[min(18.2rem,calc(100vw-1rem))] min-w-0 origin-top-left animate-fade-in-scale">
+              <div className="absolute left-0 top-full z-50 mt-1.5 w-full min-w-0 origin-top-left animate-fade-in-scale">
                 <div
                   className={cn(
                     "overflow-hidden rounded-lg border bg-popover text-popover-foreground",
@@ -478,7 +478,7 @@ export function TopBar({
                                       Rename
                                     </DropdownMenuItem>
                                     <DropdownMenuItem
-                                      className="cursor-pointer gap-2 text-destructive focus:text-destructive"
+                                      className="cursor-pointer gap-2 text-destructive transition-colors focus:bg-destructive/15 focus:text-destructive data-[highlighted]:bg-destructive/15 data-[highlighted]:text-destructive"
                                       onSelect={() => openDelete(project)}
                                     >
                                       <Trash2 className="h-4 w-4" />
@@ -791,7 +791,7 @@ export function TopBar({
                         onSettingsClick();
                         setShowUserMenu(false);
                       }}
-                      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-foreground hover:bg-secondary/60 transition-all duration-200"
+                      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-foreground transition-all duration-200 hover:bg-[hsl(var(--primary)/0.18)] hover:text-[hsl(var(--foreground))] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--primary)/0.35)]"
                     >
                       <User className="w-4 h-4 text-muted-foreground" />
                       <span>Profile Settings</span>
@@ -801,7 +801,7 @@ export function TopBar({
                         onSettingsClick();
                         setShowUserMenu(false);
                       }}
-                      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-foreground hover:bg-secondary/60 transition-all duration-200"
+                      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-foreground transition-all duration-200 hover:bg-[hsl(var(--primary)/0.18)] hover:text-[hsl(var(--foreground))] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--primary)/0.35)]"
                     >
                       <Settings className="w-4 h-4 text-muted-foreground" />
                       <span>Account Settings</span>
@@ -811,7 +811,7 @@ export function TopBar({
                         toast.info("Billing page coming soon");
                         setShowUserMenu(false);
                       }}
-                      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-foreground hover:bg-secondary/60 transition-all duration-200"
+                      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-foreground transition-all duration-200 hover:bg-[hsl(var(--primary)/0.18)] hover:text-[hsl(var(--foreground))] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--primary)/0.35)]"
                     >
                       <CreditCard className="w-4 h-4 text-muted-foreground" />
                       <span>Billing & Plans</span>
@@ -821,7 +821,7 @@ export function TopBar({
                         toast.info("Help center coming soon");
                         setShowUserMenu(false);
                       }}
-                      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-foreground hover:bg-secondary/60 transition-all duration-200"
+                      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-foreground transition-all duration-200 hover:bg-[hsl(var(--primary)/0.18)] hover:text-[hsl(var(--foreground))] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--primary)/0.35)]"
                     >
                       <HelpCircle className="w-4 h-4 text-muted-foreground" />
                       <span>Help & Support</span>
@@ -832,8 +832,10 @@ export function TopBar({
                   <div className="p-2 border-t border-border/60">
                     <button
                       onClick={() => {
+                        logout();
                         toast.success("Logged out successfully");
                         setShowUserMenu(false);
+                        navigate("/auth?mode=login", { replace: true });
                       }}
                       className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-destructive hover:bg-destructive/10 transition-all duration-200"
                     >

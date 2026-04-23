@@ -3,7 +3,7 @@ import { motion } from "framer-motion";
 import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { AgentUsageRow, SortDir, SortKey } from "./usageUtils";
-import { formatCompactNumber, formatUsd, sortRows } from "./usageUtils";
+import { CHART_PALETTE, formatCompactNumber, formatUsd, sortRows } from "./usageUtils";
 
 interface UsageTableProps {
   rows: AgentUsageRow[];
@@ -51,19 +51,20 @@ export function UsageTable({ rows, isDark }: UsageTableProps) {
     <motion.div
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: 0.15 }}
+      transition={{ delay: 0.15, duration: 0.35, ease: "easeOut" }}
       className={cn(
-        "rounded-2xl border overflow-hidden shadow-sm",
-        isDark ? "border-white/10 bg-card/40" : "border-border/80 bg-card/60",
+        "relative overflow-hidden rounded-3xl border shadow-sm",
+        isDark ? "border-white/10 bg-card/55" : "border-border/80 bg-card/80",
       )}
     >
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,hsl(var(--primary)/0.12),transparent_34%)]" />
       <div className="overflow-x-auto">
-        <table className="w-full text-sm">
+        <table className="relative w-full text-sm">
           <thead>
             <tr
               className={cn(
-                "border-b text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground",
-                isDark ? "border-white/10 bg-white/[0.03]" : "border-border bg-muted/30",
+                "border-b text-left text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground",
+                isDark ? "border-white/10 bg-white/[0.045]" : "border-border bg-muted/40",
               )}
             >
               {COLUMNS.map((col) => (
@@ -78,7 +79,7 @@ export function UsageTable({ rows, isDark }: UsageTableProps) {
                     type="button"
                     onClick={() => toggleSort(col.key)}
                     className={cn(
-                      "inline-flex items-center rounded-md px-1 py-0.5 -mx-1 transition-colors hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30",
+                      "inline-flex items-center rounded-lg px-1.5 py-1 -mx-1.5 transition-all duration-200 hover:bg-foreground/5 hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30",
                       col.align === "right" && "ml-auto flex-row-reverse",
                     )}
                   >
@@ -91,17 +92,26 @@ export function UsageTable({ rows, isDark }: UsageTableProps) {
           </thead>
           <tbody>
             {sorted.map((row, i) => (
-              <tr
+              <motion.tr
                 key={row.name}
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.04 * i, duration: 0.25 }}
                 className={cn(
-                  "border-b last:border-0 transition-colors",
+                  "border-b last:border-0 transition-colors duration-200",
                   isDark
-                    ? "border-white/[0.06] hover:bg-white/[0.04]"
-                    : "border-border/60 hover:bg-muted/40",
+                    ? "border-white/[0.06] hover:bg-white/[0.055]"
+                    : "border-border/60 hover:bg-muted/45",
                 )}
               >
                 <td className="px-4 py-3 font-medium text-foreground">
-                  {row.displayName}
+                  <div className="flex items-center gap-2.5">
+                    <span
+                      className="h-2.5 w-2.5 rounded-full shadow-[0_0_12px_currentColor]"
+                      style={{ color: CHART_PALETTE[i % CHART_PALETTE.length], backgroundColor: CHART_PALETTE[i % CHART_PALETTE.length] }}
+                    />
+                    <span>{row.displayName}</span>
+                  </div>
                 </td>
                 <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">
                   {formatCompactNumber(row.requests)}
@@ -115,7 +125,7 @@ export function UsageTable({ rows, isDark }: UsageTableProps) {
                 <td className="px-4 py-3 text-right font-medium tabular-nums text-foreground">
                   {formatUsd(row.cost)}
                 </td>
-              </tr>
+              </motion.tr>
             ))}
           </tbody>
         </table>

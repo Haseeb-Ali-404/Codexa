@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 
 /* ═══════════════════════════════════════════════════════
@@ -339,6 +339,7 @@ const FloatingInput: React.FC<FloatingInputProps> = ({
         </label>
 
         <input
+          className="auth-input"
           name={name}
           type={type}
           value={value}
@@ -356,6 +357,8 @@ const FloatingInput: React.FC<FloatingInputProps> = ({
             border: "none",
             outline: "none",
             color: "#f0f0f8",
+            caretColor: "#a78bfa",
+            colorScheme: "dark",
             fontSize: "14.5px",
             fontWeight: 400,
             fontFamily: "'Outfit', sans-serif",
@@ -1227,7 +1230,10 @@ const ParticleCanvas: React.FC = () => {
    MAIN AUTH PAGE
 ═══════════════════════════════════════════════════════ */
 const AuthPage: React.FC = () => {
-  const [mode, setMode] = useState<AuthMode>("login");
+  const [mode, setMode] = useState<AuthMode>(() => {
+    const modeParam = new URLSearchParams(window.location.search).get("mode");
+    return modeParam === "signup" ? "signup" : "login";
+  });
   const [appState, setAppState] = useState<AppState>("idle");
   const [showForgot, setShowForgot] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
@@ -1242,6 +1248,7 @@ const AuthPage: React.FC = () => {
   });
 
   const navigate = useNavigate();
+  const location = useLocation();
   const { setToken } = useAuth();
 
   /* ── Mode switch: reset everything ── */
@@ -1254,9 +1261,27 @@ const AuthPage: React.FC = () => {
       setShowPassword(false);
       setShowConfirm(false);
       setFormData({ name: "", email: "", password: "", confirm_password: "" });
+      navigate(`/auth?mode=${m}`, { replace: true });
     },
-    [appState],
+    [appState, navigate],
   );
+
+  useEffect(() => {
+    if (appState !== "idle") return;
+
+    const modeParam = new URLSearchParams(location.search).get("mode");
+    const nextMode: AuthMode = modeParam === "signup" ? "signup" : "login";
+
+    if (nextMode === mode) return;
+
+    setMode(nextMode);
+    setErrors({});
+    setTouched({});
+    setShowPassword(false);
+    setShowConfirm(false);
+    setShowForgot(false);
+    setFormData({ name: "", email: "", password: "", confirm_password: "" });
+  }, [appState, location.search, mode]);
 
   /* ── Field change ── */
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1453,12 +1478,26 @@ const AuthPage: React.FC = () => {
         * { box-sizing: border-box; }
         html, body, #root { height: 100%; }
 
+        .auth-input,
+        .auth-input:hover,
+        .auth-input:focus,
+        .auth-input:active {
+          background-color: transparent !important;
+          color: #f0f0f8 !important;
+          caret-color: #a78bfa;
+          color-scheme: dark;
+          appearance: none;
+          -webkit-appearance: none;
+        }
+
         .auth-input:-webkit-autofill,
         .auth-input:-webkit-autofill:hover,
-        .auth-input:-webkit-autofill:focus {
+        .auth-input:-webkit-autofill:focus,
+        .auth-input:-webkit-autofill:active {
           -webkit-text-fill-color: #f0f0f8 !important;
-          -webkit-box-shadow: 0 0 0px 1000px rgba(20,20,30,0.95) inset !important;
-          transition: background-color 5000s ease-in-out 0s;
+          box-shadow: 0 0 0 1000px rgba(19,19,28,0.98) inset !important;
+          -webkit-box-shadow: 0 0 0 1000px rgba(19,19,28,0.98) inset !important;
+          transition: background-color 99999s ease-out, color 99999s ease-out;
           caret-color: #a78bfa;
         }
           /* ── Custom Scrollbar ── */
@@ -1565,6 +1604,48 @@ const AuthPage: React.FC = () => {
       />
 
       {/* ── Page wrapper ── */}
+      <a
+        href="/home.html"
+        aria-label="Back to main website"
+        style={{
+          position: "fixed",
+          top: "22px",
+          left: "22px",
+          zIndex: 5,
+          display: "inline-flex",
+          alignItems: "center",
+          gap: "8px",
+          padding: "10px 14px",
+          borderRadius: "999px",
+          border: "1px solid rgba(255,255,255,0.1)",
+          background: "rgba(255,255,255,0.045)",
+          color: "#d8d5e8",
+          textDecoration: "none",
+          fontFamily: "'Outfit', sans-serif",
+          fontSize: "13px",
+          fontWeight: 600,
+          backdropFilter: "blur(16px)",
+          WebkitBackdropFilter: "blur(16px)",
+          boxShadow: "0 12px 32px rgba(0,0,0,0.22)",
+        }}
+      >
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <line x1="19" y1="12" x2="5" y2="12" />
+          <polyline points="12 19 5 12 12 5" />
+        </svg>
+        Back to Website
+      </a>
+
       <div
         style={{
           minHeight: "100vh",
