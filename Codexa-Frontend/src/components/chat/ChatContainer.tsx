@@ -7,6 +7,7 @@ import {
 } from "react";
 import { ChatMessage } from "./ChatMessage";
 import type { PlannerPipelineState, StageStatus } from "./PlannerStageMessage";
+import type { DeveloperPipelineState } from "./DeveloperStageMessage";
 import { MessageInput, type ChatAttachmentPayload } from "./MessageInput";
 import {
   Sparkles,
@@ -44,6 +45,7 @@ interface Message {
   };
   attachments?: MessageAttachmentView[];
   pipeline?: PlannerPipelineState;
+  developerPipeline?: DeveloperPipelineState;
   generatorProgress?: { received: number; total: number; done: boolean };
   validationPassed?: boolean | null;
   architectureData?: Record<string, unknown>;
@@ -108,8 +110,8 @@ export function ChatContainer({ onCodeGenerated, onCodeEdited }: Props) {
   const streamingMessageIdRef = useRef<string | null>(null);
   /** ID of the live planner stage message bubble */
   const plannerMsgIdRef = useRef<string | null>(null);
-  /** ID of the live generator bubble */
-  const generatorMsgIdRef = useRef<string | null>(null);
+  /** ID of the live developer progress bubble */
+  const developerMsgIdRef = useRef<string | null>(null);
   /** ID of the live validator bubble */
   const validatorMsgIdRef = useRef<string | null>(null);
   /** Accumulated planner_delta text */
@@ -144,7 +146,7 @@ export function ChatContainer({ onCodeGenerated, onCodeEdited }: Props) {
     streamCharQueueRef.current = [];
     streamingMessageIdRef.current = null;
     plannerMsgIdRef.current = null;
-    generatorMsgIdRef.current = null;
+    developerMsgIdRef.current = null;
     validatorMsgIdRef.current = null;
     plannerTextRef.current = "";
     const w = chatWsRef.current;
@@ -373,6 +375,34 @@ export function ChatContainer({ onCodeGenerated, onCodeEdited }: Props) {
       },
     ]);
   };
+
+  const appendDeveloperUpdate = (
+    updates: string[] | undefined,
+    nextUpdate?: string,
+  ) => {
+    const trimmed = (nextUpdate ?? "").trim();
+    if (!trimmed) return updates ?? [];
+    const deduped = (updates ?? []).filter((item) => item !== trimmed);
+    return [...deduped, trimmed].slice(-6);
+  };
+
+  const updateDeveloperPipeline = (
+    updater: (pipeline: DeveloperPipelineState) => DeveloperPipelineState,
+  ) => {
+    const targetId = developerMsgIdRef.current;
+    if (!targetId) return;
+    setMessages((prev) =>
+      prev.map((message) =>
+        message.id === targetId && message.developerPipeline
+          ? {
+              ...message,
+              developerPipeline: updater(message.developerPipeline),
+            }
+          : message,
+      ),
+    );
+  };
+
   // Handle send
   const handleSend = async (
     content: string,
@@ -859,38 +889,151 @@ export function ChatContainer({ onCodeGenerated, onCodeEdited }: Props) {
 
       // 💻 DEVELOPER START — create generator bubble
       if (data.type === "developer_start") {
-        const msgId = `gen-${Date.now()}`;
-        generatorMsgIdRef.current = msgId;
+        const msgId = `developer-${Date.now()}`;
+        developerMsgIdRef.current = msgId;
+        const initialDeveloperPipeline: DeveloperPipelineState = {
+          stages: [1, 2, 3, 4, 5].map((stage) => ({
+            stage,
+            status: "idle",
+          })),
+          currentStage: 0,
+          isComplete: false,
+          recentUpdates: [],
+        };
         setIsLoading(false);
-        setMessages(prev => [...prev, {
-          id: msgId,
-          role: "assistant",
-          content: "",
-          agent: "generator",
-          createdAt: new Date().toISOString(),
-          generatorProgress: { received: 0, total: 0, done: false },
-        }]);
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: msgId,
+            role: "assistant",
+            content: "",
+            agent: "developer",
+            createdAt: new Date().toISOString(),
+            developerPipeline: initialDeveloperPipeline,
+          },
+        ]);
       }
 
       // 💻 DEVELOPER RESULT CHUNK — update progress
-      if (data.type === "developer_result_chunk" && generatorMsgIdRef.current) {
+      if (data.type === "developer_stage_start" && developerMsgIdRef.current) {
+        const stageNum = data.stage as number;
+        const message = typeof data.message === "string" ? data.message : "";
+        updateDeveloperPipeline((pipeline) => ({
+          ...pipeline,
+          currentStage: stageNum,
+          totalTiers: (data.total_tiers as number | undefined) ?? pipeline.totalTiers,
+          currentTier: (data.current_tier as number | undefined) ?? pipeline.currentTier,
+          totalFiles: (data.total_files as number | undefined) ?? pipeline.totalFiles,
+          currentBatchLabel:
+            (data.current_batch_label as string | undefined) ??
+            pipeline.currentBatchLabel,
+          assembledFiles:
+            (data.assembled_files as number | undefined) ?? pipeline.assembledFiles,
+          isParallel:
+            typeof data.is_parallel === "boolean"
+              ? (data.is_parallel as boolean)
+              : pipeline.isParallel,
+          recentUpdates: appendDeveloperUpdate(pipeline.recentUpdates, message),
+          stages: pipeline.stages.map((stage) =>
+            stage.stage === stageNum
+              ? { ...stage, status: "running", message: message || stage.message }
+              : stage
+          ),
+        }));
+      }
+
+      if (data.type === "developer_stage_complete" && developerMsgIdRef.current) {
+        const stageNum = data.stage as number;
+        const message = typeof data.message === "string" ? data.message : "";
+        updateDeveloperPipeline((pipeline) => ({
+          ...pipeline,
+          currentStage: Math.max(pipeline.currentStage, stageNum),
+          totalFiles: (data.total_files as number | undefined) ?? pipeline.totalFiles,
+          completedFiles:
+            (data.completed_files as number | undefined) ?? pipeline.completedFiles,
+          recentUpdates: appendDeveloperUpdate(pipeline.recentUpdates, message),
+          isComplete: stageNum >= pipeline.stages.length ? true : pipeline.isComplete,
+          stages: pipeline.stages.map((stage) =>
+            stage.stage === stageNum
+              ? { ...stage, status: "complete", message: message || stage.message }
+              : stage
+          ),
+        }));
+      }
+
+      if (data.type === "developer_progress" && developerMsgIdRef.current) {
+        const message = typeof data.message === "string" ? data.message : "";
+        updateDeveloperPipeline((pipeline) => ({
+          ...pipeline,
+          totalTiers: (data.total_tiers as number | undefined) ?? pipeline.totalTiers,
+          currentTier: (data.current_tier as number | undefined) ?? pipeline.currentTier,
+          totalFiles: (data.total_files as number | undefined) ?? pipeline.totalFiles,
+          completedFiles:
+            (data.completed_files as number | undefined) ?? pipeline.completedFiles,
+          currentBatchLabel:
+            (data.current_batch_label as string | undefined) ??
+            pipeline.currentBatchLabel,
+          assembledFiles:
+            (data.assembled_files as number | undefined) ?? pipeline.assembledFiles,
+          isParallel:
+            typeof data.is_parallel === "boolean"
+              ? (data.is_parallel as boolean)
+              : pipeline.isParallel,
+          recentUpdates: appendDeveloperUpdate(pipeline.recentUpdates, message),
+        }));
+      }
+
+      if (data.type === "developer_result_chunk" && developerMsgIdRef.current) {
         const received = (data.chunk_index as number) + 1;
         const total = data.total_chunks as number;
-        setMessages(prev => prev.map(m =>
-          m.id === generatorMsgIdRef.current
-            ? { ...m, generatorProgress: { received, total, done: false } }
-            : m
-        ));
+        updateDeveloperPipeline((pipeline) => ({
+          ...pipeline,
+          currentStage: 5,
+          deliveryChunksReceived: received,
+          deliveryChunksTotal: total,
+          recentUpdates: appendDeveloperUpdate(
+            pipeline.recentUpdates,
+            `Delivering project payload (${received}/${total} chunks)`,
+          ),
+          stages: pipeline.stages.map((stage) => {
+            if (stage.stage === 4 && stage.status === "running") {
+              return { ...stage, status: "complete" };
+            }
+            if (stage.stage === 5) {
+              return {
+                ...stage,
+                status: "running",
+                message: "Packaging project for delivery...",
+              };
+            }
+            return stage;
+          }),
+        }));
       }
 
       // 💻 DEVELOPER RESULT DONE — mark complete
-      if (data.type === "developer_result_done" && generatorMsgIdRef.current) {
-        setMessages(prev => prev.map(m =>
-          m.id === generatorMsgIdRef.current
-            ? { ...m, generatorProgress: { ...m.generatorProgress!, done: true } }
-            : m
-        ));
-        generatorMsgIdRef.current = null;
+      if (data.type === "developer_result_done" && developerMsgIdRef.current) {
+        updateDeveloperPipeline((pipeline) => ({
+          ...pipeline,
+          currentStage: 5,
+          isComplete: true,
+          deliveryChunksReceived:
+            pipeline.deliveryChunksTotal ?? pipeline.deliveryChunksReceived,
+          recentUpdates: appendDeveloperUpdate(
+            pipeline.recentUpdates,
+            "Developer output delivered successfully",
+          ),
+          stages: pipeline.stages.map((stage) =>
+            stage.stage === 5
+              ? {
+                  ...stage,
+                  status: "complete",
+                  message: stage.message || "Developer output ready",
+                }
+              : stage
+          ),
+        }));
+        developerMsgIdRef.current = null;
       }
 
       // 🧪 DEBUGGER + ARCHITECT START — create validator bubble

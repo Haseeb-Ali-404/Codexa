@@ -19,6 +19,8 @@ import {
 } from "@/lib/rehypeSearchHighlight";
 import { PlannerStageMessage } from "./PlannerStageMessage";
 import type { PlannerPipelineState } from "./PlannerStageMessage";
+import { DeveloperStageMessage } from "./DeveloperStageMessage";
+import type { DeveloperPipelineState } from "./DeveloperStageMessage";
 import { GeneratorMessage } from "./GeneratorMessage";
 import type { GeneratorProgress } from "./GeneratorMessage";
 import { ValidatorMessage } from "./ValidatorMessage";
@@ -33,6 +35,7 @@ interface ChatMessageProps {
     content: string;
     createdAt?: string | number;
     pipeline?: PlannerPipelineState;
+    developerPipeline?: DeveloperPipelineState;
     generatorProgress?: GeneratorProgress;
     validationPassed?: boolean | null;
     architectureData?: Record<string, unknown>;
@@ -127,7 +130,7 @@ export function ChatMessage({ message, index, searchHighlight }: ChatMessageProp
     if (message.agent === "developer") {
       try {
         const formatted = formatCodeString(message.content, "html");
-        setParsedCode(formatted);
+        setParsedCode(formatted.content.trim().length > 0 ? formatted : null);
       } catch {
         console.error("Developer code formatting failed.");
       }
@@ -229,6 +232,8 @@ export function ChatMessage({ message, index, searchHighlight }: ChatMessageProp
           {/* Message Rendering */}
           {message.pipeline ? (
             <PlannerStageMessage pipeline={message.pipeline} />
+          ) : message.developerPipeline ? (
+            <DeveloperStageMessage pipeline={message.developerPipeline} />
           ) : message.agent === "generator" ? (
             <GeneratorMessage progress={message.generatorProgress} />
           ) : message.agent === "validator" ? (
