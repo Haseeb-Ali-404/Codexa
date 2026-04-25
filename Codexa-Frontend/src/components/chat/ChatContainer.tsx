@@ -8,10 +8,20 @@ import {
 import { ChatMessage } from "./ChatMessage";
 import type { PlannerPipelineState, StageStatus } from "./PlannerStageMessage";
 import type { DeveloperPipelineState } from "./DeveloperStageMessage";
-import { MessageInput, type ChatAttachmentPayload } from "./MessageInput";
+import {
+  MessageInput,
+  type ChatAttachmentPayload,
+  type MessageInputMenuAction,
+} from "./MessageInput";
+import {
+  GeneratedAssetsPanel,
+  type UmlDiagramAsset,
+} from "./GeneratedAssetsPanel";
+import type { DebuggerState } from "./ValidatorMessage";
 import {
   Sparkles,
   Code,
+  FileText,
   User,
   Palette,
   Globe,
@@ -23,6 +33,8 @@ import { useAuth } from "@/context/AuthContext";
 import { useParams, useNavigate } from "react-router-dom";
 import { useChatSearch } from "@/context/ChatSearchContext";
 import { useAppData } from "@/context/useAppData";
+import { API_BASE } from "@/lib/api";
+import { toast } from "sonner";
 
 interface MessageAttachmentView {
   id: string;
@@ -49,6 +61,7 @@ interface Message {
   generatorProgress?: { received: number; total: number; done: boolean };
   validationPassed?: boolean | null;
   architectureData?: Record<string, unknown>;
+  debuggerState?: DebuggerState;
 }
 
 interface Props {
@@ -83,7 +96,13 @@ const suggestions = [
 
 export function ChatContainer({ onCodeGenerated, onCodeEdited }: Props) {
   const { userId } = useAuth();
-  const { refreshData, mergeCodeDiffs, projectFiles, setSelectedFile } = useAppData();
+  const {
+    refreshData,
+    mergeCodeDiffs,
+    projectFiles,
+    setSelectedFile,
+    userProjects,
+  } = useAppData();
   const { chatId } = useParams();
   const {
     registerMessages,
@@ -97,6 +116,11 @@ export function ChatContainer({ onCodeGenerated, onCodeEdited }: Props) {
   const [isLoading, setIsLoading] = useState(false);
   /** True from send until assistant finishes, errors, or user stops — drives Stop button in input */
   const [isGenerating, setIsGenerating] = useState(false);
+  const [umlDiagrams, setUmlDiagrams] = useState<UmlDiagramAsset[]>([]);
+  const [pptUrl, setPptUrl] = useState<string | null>(null);
+  const [pptViewerUrl, setPptViewerUrl] = useState<string | null>(null);
+  const [isGeneratingUml, setIsGeneratingUml] = useState(false);
+  const [isGeneratingPpt, setIsGeneratingPpt] = useState(false);
   const chatWsRef = useRef<WebSocket | null>(null);
   const wsGenerationActiveRef = useRef(false);
   // const [chatId, setchatId] = useState<string | null>(null);
@@ -124,6 +148,27 @@ export function ChatContainer({ onCodeGenerated, onCodeEdited }: Props) {
   /** When false, new tokens must not yank scroll (user reading earlier messages) */
   const stickToBottomRef = useRef(true);
   const [showJumpToBottom, setShowJumpToBottom] = useState(false);
+  const activeProject =
+    userProjects.find((project: any) => project?.chat_id === chatId) ?? null;
+  const activeProjectId =
+    typeof activeProject?._id === "string" ? activeProject._id : null;
+
+  const loadGeneratedAssets = useCallback(async (projectId: string) => {
+    try {
+      const res = await fetch(`${API_BASE}/projects/${projectId}/assets`);
+      if (!res.ok) return;
+      const data = await res.json();
+      setUmlDiagrams(Array.isArray(data.diagrams) ? data.diagrams : []);
+      setPptUrl(typeof data.ppt_url === "string" ? data.ppt_url : null);
+      console.log(data);
+      
+      setPptViewerUrl(
+        typeof data.viewer_url === "string" ? data.viewer_url : null,
+      );
+    } catch (err) {
+      console.error("Failed to load generated assets:", err);
+    }
+  }, []);
 
   useLayoutEffect(() => {
     registerScrollParent(chatScrollRef.current);
@@ -131,13 +176,22 @@ export function ChatContainer({ onCodeGenerated, onCodeEdited }: Props) {
   }, [registerScrollParent]);
 
   useEffect(() => {
+    if (!activeProjectId) {
+      setUmlDiagrams([]);
+      setPptUrl(null);
+      setPptViewerUrl(null);
+      return;
+    }
+    void loadGeneratedAssets(activeProjectId);
+  }, [activeProjectId, loadGeneratedAssets]);
+
+  useEffect(() => {
     registerMessages(
       messages.map((m) => ({ id: m.id, content: m.content ?? "" })),
     );
   }, [messages, registerMessages]);
 
-  const handleStopGeneration = useCallback(() => {
-    wsGenerationActiveRef.current = false;
+  const clearTransientStreamingState = useCallback(() => {
     streamingActiveRef.current = false;
     if (streamRafRef.current !== null) {
       cancelAnimationFrame(streamRafRef.current);
@@ -149,6 +203,11 @@ export function ChatContainer({ onCodeGenerated, onCodeEdited }: Props) {
     developerMsgIdRef.current = null;
     validatorMsgIdRef.current = null;
     plannerTextRef.current = "";
+  }, []);
+
+  const handleStopGeneration = useCallback(() => {
+    wsGenerationActiveRef.current = false;
+    clearTransientStreamingState();
     const w = chatWsRef.current;
     chatWsRef.current = null;
     if (w) {
@@ -163,9 +222,9 @@ export function ChatContainer({ onCodeGenerated, onCodeEdited }: Props) {
     }
     setIsGenerating(false);
     setIsLoading(false);
-  }, []);
+  }, [clearTransientStreamingState]);
 
-  const scrollToBottom = (behavior: ScrollBehavior = "smooth") => {
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
     const container = chatScrollRef.current;
 
     if (container) {
@@ -174,7 +233,69 @@ export function ChatContainer({ onCodeGenerated, onCodeEdited }: Props) {
         behavior,
       });
     }
-  };
+  }, []);
+
+  const handleGenerateUml = useCallback(async () => {
+    if (!activeProjectId) {
+      toast.error("Create or open a project first.");
+      return;
+    }
+
+    setIsGeneratingUml(true);
+    try {
+      const res = await fetch(`${API_BASE}/projects/${activeProjectId}/generate-uml`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        throw new Error(data.detail || "Failed to generate UML diagrams.");
+      }
+      setUmlDiagrams(Array.isArray(data.diagrams) ? data.diagrams : []);
+      toast.success(data.cached ? "Loaded cached UML diagrams." : "UML diagrams generated.");
+      scrollToBottom("smooth");
+    } catch (err) {
+      console.error("Failed to generate UML diagrams:", err);
+      toast.error(
+        err instanceof Error ? err.message : "Could not generate UML diagrams.",
+      );
+    } finally {
+      setIsGeneratingUml(false);
+    }
+  }, [activeProjectId, scrollToBottom]);
+
+  const handleGeneratePpt = useCallback(async () => {
+    if (!activeProjectId) {
+      toast.error("Create or open a project first.");
+      return;
+    }
+
+    setIsGeneratingPpt(true);
+    try {
+      const res = await fetch(`${API_BASE}/projects/${activeProjectId}/generate-ppt`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        throw new Error(data.detail || "Failed to generate presentation.");
+      }
+      await loadGeneratedAssets(activeProjectId);
+      toast.success(
+        data.cached ? "Loaded cached presentation." : "Presentation generated.",
+      );
+      scrollToBottom("smooth");
+    } catch (err) {
+      console.error("Failed to generate presentation:", err);
+      toast.error(
+        err instanceof Error ? err.message : "Could not generate presentation.",
+      );
+    } finally {
+      setIsGeneratingPpt(false);
+    }
+  }, [activeProjectId, loadGeneratedAssets, scrollToBottom]);
 
   useEffect(() => {
     requestAnimationFrame(() => {
@@ -283,6 +404,16 @@ export function ChatContainer({ onCodeGenerated, onCodeEdited }: Props) {
   // Load chat history
   useEffect(() => {
     if (!chatId) {
+      wsGenerationActiveRef.current = false;
+      clearTransientStreamingState();
+      if (chatWsRef.current) {
+        try {
+          chatWsRef.current.close();
+        } catch {
+          // no-op
+        }
+        chatWsRef.current = null;
+      }
       setMessages([]);
       stickToBottomRef.current = true;
       setShowJumpToBottom(false);
@@ -291,6 +422,16 @@ export function ChatContainer({ onCodeGenerated, onCodeEdited }: Props) {
 
     const loadChat = async () => {
       try {
+        wsGenerationActiveRef.current = false;
+        clearTransientStreamingState();
+        if (chatWsRef.current) {
+          try {
+            chatWsRef.current.close();
+          } catch {
+            // no-op
+          }
+          chatWsRef.current = null;
+        }
         setChatHistoryLoading(true);
 
         const res = await fetch(`http://localhost:8000/chat/${chatId}`);
@@ -305,7 +446,7 @@ export function ChatContainer({ onCodeGenerated, onCodeEdited }: Props) {
             if (msg.agent === "architect" && msg.content) {
               try { architectureData = JSON.parse(msg.content); } catch {}
             }
-            if (msg.agent === "validator") {
+            if (msg.agent === "validator" || msg.agent === "debugger") {
               validationPassed = msg.validation_passed ?? msg.validationPassed ?? null;
             }
 
@@ -313,7 +454,6 @@ export function ChatContainer({ onCodeGenerated, onCodeEdited }: Props) {
               id: msg._id,
               role: msg.role,
               content: msg.content,
-              agent: msg.agent,
               createdAt:
                 parseMessageDate(
                   msg.created_at ||
@@ -323,8 +463,13 @@ export function ChatContainer({ onCodeGenerated, onCodeEdited }: Props) {
                     null,
                 )?.toISOString() || null,
               pipeline: msg.pipeline || undefined,
+              developerPipeline:
+                msg.developer_pipeline || msg.developerPipeline || undefined,
+              debuggerState:
+                msg.debugger_pipeline || msg.debuggerPipeline || undefined,
               architectureData,
               validationPassed,
+              agent: msg.agent === "debugger" ? "validator" : msg.agent,
             };
           });
 
@@ -335,12 +480,12 @@ export function ChatContainer({ onCodeGenerated, onCodeEdited }: Props) {
         }
       } catch (err) {
         console.error("Failed to load chat:", err);
-        setChatHistoryLoading(true);
+        setChatHistoryLoading(false);
       }
     };
 
     loadChat();
-  }, [chatId]);
+  }, [chatId, clearTransientStreamingState]);
 
   // Only when the conversation shape changes (not every token during streaming)
   useEffect(() => {
@@ -386,6 +531,16 @@ export function ChatContainer({ onCodeGenerated, onCodeEdited }: Props) {
     return [...deduped, trimmed].slice(-6);
   };
 
+  const appendDebuggerUpdate = (
+    updates: string[] | undefined,
+    nextUpdate?: string,
+  ) => {
+    const trimmed = (nextUpdate ?? "").trim();
+    if (!trimmed) return updates ?? [];
+    const deduped = (updates ?? []).filter((item) => item !== trimmed);
+    return [...deduped, trimmed].slice(-6);
+  };
+
   const updateDeveloperPipeline = (
     updater: (pipeline: DeveloperPipelineState) => DeveloperPipelineState,
   ) => {
@@ -397,6 +552,23 @@ export function ChatContainer({ onCodeGenerated, onCodeEdited }: Props) {
           ? {
               ...message,
               developerPipeline: updater(message.developerPipeline),
+            }
+          : message,
+      ),
+    );
+  };
+
+  const updateDebuggerState = (
+    updater: (state: DebuggerState) => DebuggerState,
+  ) => {
+    const targetId = validatorMsgIdRef.current;
+    if (!targetId) return;
+    setMessages((prev) =>
+      prev.map((message) =>
+        message.id === targetId && message.debuggerState
+          ? {
+              ...message,
+              debuggerState: updater(message.debuggerState),
             }
           : message,
       ),
@@ -822,10 +994,13 @@ export function ChatContainer({ onCodeGenerated, onCodeEdited }: Props) {
         }));
       }
 
-      // Stage error
-      if (data.type === "stage_error" && plannerMsgIdRef.current) {
+      // Stage warning
+      if ((data.type === "stage_warning" || data.type === "stage_error") && plannerMsgIdRef.current) {
         const stageNum = data.stage as number;
-        const errors = (data.errors as string[]) || ["Unknown error"];
+        const warnings =
+          (data.warnings as string[]) ||
+          (data.errors as string[]) ||
+          ["Warning"];
         setMessages((prev) => prev.map((m) => {
           if (m.id !== plannerMsgIdRef.current || !m.pipeline) return m;
           return {
@@ -833,7 +1008,9 @@ export function ChatContainer({ onCodeGenerated, onCodeEdited }: Props) {
             pipeline: {
               ...m.pipeline,
               stages: m.pipeline.stages.map((s) =>
-                s.stage === stageNum ? { ...s, status: "error" as StageStatus, errors } : s
+                s.stage === stageNum
+                  ? { ...s, status: "warning" as StageStatus, warnings, errors: warnings }
+                  : s
               ),
             },
           };
@@ -857,7 +1034,6 @@ export function ChatContainer({ onCodeGenerated, onCodeEdited }: Props) {
             },
           };
         }));
-        plannerMsgIdRef.current = null;
       }
 
       // Planner result (legacy / fallback)
@@ -885,6 +1061,7 @@ export function ChatContainer({ onCodeGenerated, onCodeEdited }: Props) {
             ? { ...m, pipeline: { ...m.pipeline, planText: undefined, planResult: result } }
             : m
         ));
+        plannerMsgIdRef.current = null;
       }
 
       // 💻 DEVELOPER START — create generator bubble
@@ -1049,8 +1226,33 @@ export function ChatContainer({ onCodeGenerated, onCodeEdited }: Props) {
             agent: "validator",
             createdAt: new Date().toISOString(),
             validationPassed: null,
+            debuggerState: {
+              status: "running",
+              currentStep: "Preparing validation",
+              recentUpdates: [],
+              filesProcessed: 0,
+              filesFixed: 0,
+              issuesFound: 0,
+              isComplete: false,
+            },
           }]);
         }
+      }
+
+      if (data.type === "debugger_progress" && validatorMsgIdRef.current) {
+        const message = typeof data.message === "string" ? data.message : "";
+        updateDebuggerState((state) => ({
+          ...state,
+          status: "running",
+          currentStep: message || state.currentStep,
+          filesProcessed:
+            (data.files_processed as number | undefined) ?? state.filesProcessed,
+          filesFixed:
+            (data.files_fixed as number | undefined) ?? state.filesFixed,
+          issuesFound:
+            (data.issues_found as number | undefined) ?? state.issuesFound,
+          recentUpdates: appendDebuggerUpdate(state.recentUpdates, message),
+        }));
       }
 
       // 🧪 ARCHITECT RESULT — show project explanation card
@@ -1070,9 +1272,31 @@ export function ChatContainer({ onCodeGenerated, onCodeEdited }: Props) {
       // 🧪 DEBUGGER RESULT — update validator bubble
       if (data.type === "debugger_result" && validatorMsgIdRef.current) {
         const valid = data.data as boolean;
+        const summary = (data.summary as Record<string, unknown> | undefined) || {};
         setMessages(prev => prev.map(m =>
           m.id === validatorMsgIdRef.current
-            ? { ...m, validationPassed: valid }
+            ? {
+                ...m,
+                validationPassed: valid,
+                debuggerState: {
+                  status: valid ? "complete" : "warning",
+                  currentStep: valid ? "Validation complete" : "Validation finished with issues",
+                  recentUpdates:
+                    (summary.recent_updates as string[] | undefined) ||
+                    m.debuggerState?.recentUpdates ||
+                    [],
+                  filesProcessed:
+                    (summary.files_processed as number | undefined) ||
+                    m.debuggerState?.filesProcessed ||
+                    0,
+                  filesFixed: m.debuggerState?.filesFixed || 0,
+                  issuesFound:
+                    (summary.issues_found as number | undefined) ||
+                    m.debuggerState?.issuesFound ||
+                    0,
+                  isComplete: true,
+                },
+              }
             : m
         ));
         validatorMsgIdRef.current = null;
@@ -1130,6 +1354,35 @@ export function ChatContainer({ onCodeGenerated, onCodeEdited }: Props) {
       console.log("WebSocket closed");
     };
   };
+
+  const messageInputActions: MessageInputMenuAction[] = [
+    {
+      id: "generate-uml",
+      label: "Generate UML Diagrams",
+      description: activeProjectId
+        ? "Create reusable architecture and workflow diagrams"
+        : "Available once this chat has a generated project",
+      icon: Code,
+      onSelect: () => {
+        void handleGenerateUml();
+      },
+      disabled:
+        !activeProjectId || isGeneratingUml || isGeneratingPpt || isGenerating,
+    },
+    {
+      id: "generate-ppt",
+      label: "Generate PPT Presentation",
+      description: activeProjectId
+        ? "Prepare a presentation deck with visual project context"
+        : "Available once this chat has a generated project",
+      icon: FileText,
+      onSelect: () => {
+        void handleGeneratePpt();
+      },
+      disabled:
+        !activeProjectId || isGeneratingUml || isGeneratingPpt || isGenerating,
+    },
+  ];
 
   const hasMessages = messages.length > 0;
 
@@ -1283,6 +1536,15 @@ export function ChatContainer({ onCodeGenerated, onCodeEdited }: Props) {
               </div>
             ))}
 
+            <GeneratedAssetsPanel
+              projectTitle={activeProject?.title ?? null}
+              umlDiagrams={umlDiagrams}
+              pptUrl={pptUrl}
+              viewerUrl={pptViewerUrl}
+              isGeneratingUml={isGeneratingUml}
+              isGeneratingPpt={isGeneratingPpt}
+            />
+
             {isLoading && (
               <div className="flex gap-3 animate-fade-in-up">
                 <div className="w-9 h-9 rounded-full bg-muted/70 border border-border flex items-center justify-center shrink-0">
@@ -1339,6 +1601,7 @@ export function ChatContainer({ onCodeGenerated, onCodeEdited }: Props) {
         isLoading={isLoading}
         isGenerating={isGenerating}
         onStopGeneration={handleStopGeneration}
+        extraActions={messageInputActions}
       />
     </div>
   );

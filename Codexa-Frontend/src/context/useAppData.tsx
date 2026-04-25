@@ -3,6 +3,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useRef,
   useState,
 } from "react";
 import { useAuth } from "./AuthContext";
@@ -88,6 +89,9 @@ export const AppDataProvider = ({
     Record<string, CodeFileDiff>
   >({});
   const [recentEditedPaths, setRecentEditedPaths] = useState<string[]>([]);
+  const chatsRequestSeqRef = useRef(0);
+  const projectsRequestSeqRef = useRef(0);
+  const filesRequestSeqRef = useRef(0);
 
   const mergeCodeDiffs = useCallback((changes: CodeFileDiff[]) => {
     if (!changes?.length) return;
@@ -130,14 +134,18 @@ export const AppDataProvider = ({
   ---------------------------------------- */
   const fetchUserChats = async () => {
     if (!userId) return;
+    const requestSeq = ++chatsRequestSeqRef.current;
 
     try {
       const res = await fetch(`http://localhost:8000/chat/get-chats/${userId}`);
       const data = await res.json();
 
+      if (requestSeq !== chatsRequestSeqRef.current) return;
+
       if (data.ok) {
-        setUserChats(data.chats);
-        setChatIds(data.chats.map((c: any) => c._id));
+        const chats = Array.isArray(data.chats) ? data.chats : [];
+        setUserChats(chats);
+        setChatIds(chats.map((c: any) => c._id));
       }
     } catch (err) {
       console.error("Failed to fetch chats", err);
@@ -149,14 +157,18 @@ export const AppDataProvider = ({
   ---------------------------------------- */
   const fetchUserProjects = async () => {
     if (!userId) return;
+    const requestSeq = ++projectsRequestSeqRef.current;
 
     try {
       const res = await fetch(`http://localhost:8000/projects/${userId}`);
       const data = await res.json();
 
+      if (requestSeq !== projectsRequestSeqRef.current) return;
+
       if (data.ok) {
-        setUserProjects(data.projects);
-        setProjectIds(data.projects.map((p: any) => p._id));
+        const projects = Array.isArray(data.projects) ? data.projects : [];
+        setUserProjects(projects);
+        setProjectIds(projects.map((p: any) => p._id));
       }
     } catch (err) {
       console.error("Failed to fetch projects", err);
@@ -173,10 +185,13 @@ export const AppDataProvider = ({
   ---------------------------------------- */
   const loadProjectfiles = async (projectId: string) => {
     if (!projectId) return;
+    const requestSeq = ++filesRequestSeqRef.current;
 
     try {
       const res = await fetch(`http://localhost:8000/files/${projectId}`);
       const data = await res.json();
+
+      if (requestSeq !== filesRequestSeqRef.current) return;
 
       if (data.ok) {
         const enrichedFiles: ProjectFile[] = data.files

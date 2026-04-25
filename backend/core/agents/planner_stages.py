@@ -170,7 +170,14 @@ ENTITIES: {json.dumps(entities)}
 BACKEND: {stack.get("backend", "fastapi")}
 FRONTEND: {stack.get("frontend", "react-vite")}
 
-Return ONLY valid JSON. Replace ENTITY with actual entity names from: {entity_list}
+Return ONLY valid JSON.
+Keep the payload compact and deterministic:
+- Include auth contracts plus at most 3 core domain entities from: {entity_list}
+- Keep each interface/model limited to fields needed for auth, CRUD, analytics, and status handling
+- Keep api_contracts to the most important endpoints only (max 12)
+- Use plain JSON string values only, with no comments and no markdown
+
+Replace ENTITY with actual entity names from: {entity_list}
 {{
   "interfaces": [
     {{
@@ -228,7 +235,12 @@ Return ONLY valid JSON. Replace ENTITY with actual entity names from: {entity_li
 }}"""
 
     try:
-        output = await _llm_json(prompt, ["interfaces", "api_contracts", "models"], overrides=overrides)
+        output = await _llm_json(
+            prompt,
+            ["interfaces", "api_contracts", "models"],
+            max_tokens=6144,
+            overrides=overrides,
+        )
         return {"success": True, "output": output, "errors": []}
     except Exception as e:
         return {"success": False, "output": {}, "errors": [str(e)]}

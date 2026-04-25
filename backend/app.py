@@ -1,4 +1,8 @@
+import os
+from pathlib import Path
+
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from routers.auth_router import router as auth_router
 from routers.chat_router import router as chat_router
 from routers.projects_router import router as projects_router
@@ -8,8 +12,13 @@ from routers.metrics_router import router as metrics_router
 from fastapi.middleware.cors import CORSMiddleware
 
 
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_STORAGE_ROOT = Path(os.getenv("CODEXA_STORAGE_ROOT", _REPO_ROOT / "storage"))
+
+
 def create_app():
     app = FastAPI()
+    _STORAGE_ROOT.mkdir(parents=True, exist_ok=True)
 
     app.add_middleware(
         CORSMiddleware,
@@ -31,5 +40,6 @@ def create_app():
     app.include_router(files_router)
     app.include_router(preview_router)
     app.include_router(metrics_router)
+    app.mount("/storage", StaticFiles(directory=str(_STORAGE_ROOT)), name="storage")
 
     return app

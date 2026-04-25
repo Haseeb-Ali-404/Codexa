@@ -1,9 +1,29 @@
 import re
 import ast
+import importlib.util
 from pathlib import Path
-from typing import Optional, Dict, List, Tuple, Any
+from typing import Optional, Dict, List, Tuple, Any, Callable
 
 from core.validation.import_extractor import extract_npm_imports, _NODE_BUILTINS, _INTERNAL_PREFIXES
+
+
+_DOCKER_RUNNER_MODULE = None
+
+
+def _load_docker_runner_module():
+    global _DOCKER_RUNNER_MODULE
+    if _DOCKER_RUNNER_MODULE is not None:
+        return _DOCKER_RUNNER_MODULE
+
+    module_path = Path(__file__).resolve().parents[3] / "docker" / "docker_runner.py"
+    spec = importlib.util.spec_from_file_location("codexa_docker_runner", module_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Unable to load Docker runner from {module_path}")
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    _DOCKER_RUNNER_MODULE = module
+    return module
 
 class DebuggerAgent:
     """
@@ -21,12 +41,27 @@ class DebuggerAgent:
         "backend/main.py",
     }
 
-    def __init__(self, verbose: bool = True) -> None:
+    def __init__(
+        self,
+        verbose: bool = True,
+        reporter: Optional[Callable[[str, Dict[str, Any]], None]] = None,
+    ) -> None:
         self.verbose = verbose
+        self.reporter = reporter
         self.fixes_applied: List[str] = []
         self.errors_found: List[str] = []
         self.performance_metrics: Dict[str, Any] = {}
         self.security_issues: List[str] = []
+
+    def _report(self, message: str, **extra: Any) -> None:
+        payload = {"message": message, **extra}
+        if self.reporter:
+            try:
+                self.reporter(message, payload)
+            except Exception:
+                pass
+        if self.verbose:
+            print(f"[Debugger] {message}")
 
     def _collect_files(self, structure: list, base_path: str = "") -> set[str]:
         files: set[str] = set()
@@ -70,6 +105,65 @@ class DebuggerAgent:
             print("[Debugger] Project validation passed")
 
         return True
+
+    def validate_project_json_with_summary(self, project_json: dict) -> dict:
+        updates: list[str] = []
+        issues: list[str] = []
+
+        def note(message: str) -> None:
+            updates.append(message)
+            self._report(message, scope="project", issues_found=len(issues))
+
+        if not project_json or "structure" not in project_json:
+            issues.append("Invalid project JSON: missing structure")
+            note("Generated project payload is missing structure data")
+            return {
+                "ok": False,
+                "files_processed": 0,
+                "issues_found": len(issues),
+                "recent_updates": updates,
+                "issues": issues,
+            }
+
+        all_files = self._collect_files(project_json["structure"])
+        note(f"Scanned {len(all_files)} generated files")
+
+        missing_frontend = sorted(self.REQUIRED_FRONTEND_FILES - all_files)
+        if missing_frontend:
+            issues.extend([f"Missing frontend file: {path}" for path in missing_frontend])
+            note(f"Missing {len(missing_frontend)} critical frontend file(s)")
+        else:
+            note("Verified required frontend entry files")
+
+        missing_backend = sorted(self.REQUIRED_BACKEND_FILES - all_files)
+        if missing_backend:
+            issues.extend([f"Missing backend file: {path}" for path in missing_backend])
+            note(f"Missing {len(missing_backend)} critical backend file(s)")
+        else:
+            note("Verified required backend entry files")
+
+        has_frontend_components = any(path.endswith(".tsx") for path in all_files)
+        has_backend_python = any(path.endswith(".py") for path in all_files)
+        if has_frontend_components:
+            note("Detected frontend component files")
+        else:
+            issues.append("No TSX frontend components detected")
+            note("Frontend component files were not detected")
+
+        if has_backend_python:
+            note("Detected backend Python modules")
+        else:
+            issues.append("No backend Python modules detected")
+            note("Backend Python modules were not detected")
+
+        ok = len(issues) == 0
+        return {
+            "ok": ok,
+            "files_processed": len(all_files),
+            "issues_found": len(issues),
+            "recent_updates": updates[-6:],
+            "issues": issues,
+        }
 
     def validate_backend_code(self, backend_path: Path) -> list:
         """
@@ -204,6 +298,50 @@ class DebuggerAgent:
 
         return errors
 
+    def _repair_lucide_imports(
+        self,
+        content: str,
+        missing_exports: Optional[set[str]] = None,
+    ) -> str:
+        """
+        Replace hallucinated lucide-react icon imports with safe aliases so
+        the file can still compile without rewriting JSX usage sites.
+        """
+        fallback_aliases = {
+            "PlusMinus": "Circle",
+            "SquareRoot": "Circle",
+            "Radical": "Circle",
+            "Sigma": "Circle",
+        }
+        for export_name in missing_exports or set():
+            fallback_aliases.setdefault(export_name, "Circle")
+
+        def repl(match: re.Match) -> str:
+            raw_icons = match.group("icons")
+            parts = [part.strip() for part in raw_icons.replace("\n", " ").split(",") if part.strip()]
+            changed = False
+            repaired: list[str] = []
+            for part in parts:
+                if " as " in part:
+                    repaired.append(part)
+                    continue
+                fallback = fallback_aliases.get(part)
+                if fallback:
+                    repaired.append(f"{fallback} as {part}")
+                    changed = True
+                else:
+                    repaired.append(part)
+            if not changed:
+                return match.group(0)
+            return f"import {{\n  {', '.join(repaired)}\n}} from 'lucide-react';"
+
+        return re.sub(
+            r"import\s*\{(?P<icons>.*?)\}\s*from\s*['\"]lucide-react['\"]\s*;?",
+            repl,
+            content,
+            flags=re.DOTALL,
+        )
+
     def auto_fix_backend_file(self, content: str, rel_path: str) -> str:
         """Apply auto-fixes to backend file content."""
         original_content = content
@@ -332,11 +470,37 @@ class DebuggerAgent:
             content += '\n\nif __name__ == "__main__":\n    import uvicorn\n    uvicorn.run("main:app", host="0.0.0.0", port=7979, reload=True)\n'
             fixes_count += 1
 
+        if rel_path == "main.py" and "create_app(" in content and not re.search(r"^\s*app\s*=", content, flags=re.MULTILINE):
+            content += "\n\napp = create_app()\n"
+            fixes_count += 1
+
         # Fix incorrect uvicorn port (should be 7979)
         if rel_path == "main.py" and "uvicorn.run" in content:
             content = re.sub(r'port\s*=\s*\d+', 'port=7979', content)
             content = re.sub(r'uvicorn\.run\("app:create_app"', 'uvicorn.run("main:app"', content)
             fixes_count += 1
+
+        if rel_path == "main.py" and "FastAPI" in content and "CORSMiddleware" not in content:
+            if "from fastapi import FastAPI" in content:
+                content = content.replace(
+                    "from fastapi import FastAPI",
+                    "from fastapi import FastAPI\nfrom fastapi.middleware.cors import CORSMiddleware",
+                )
+            app_match = re.search(r"^\s*app\s*=\s*FastAPI\([^)]*\)\s*$", content, flags=re.MULTILINE)
+            if app_match:
+                insert_at = app_match.end()
+                content = (
+                    content[:insert_at]
+                    + "\n\napp.add_middleware(\n"
+                    + "    CORSMiddleware,\n"
+                    + "    allow_origins=['http://localhost:5959', 'http://localhost:5173'],\n"
+                    + "    allow_credentials=True,\n"
+                    + "    allow_methods=['*'],\n"
+                    + "    allow_headers=['*'],\n"
+                    + ")\n"
+                    + content[insert_at:]
+                )
+                fixes_count += 1
 
         # Fix datetime.now() → datetime.utcnow() (motor stores UTC)
         if "datetime.now()" in content:
@@ -387,10 +551,19 @@ class DebuggerAgent:
                     fixes_count += 1
 
         # Fix Pydantic v1 class Config → model_config (pydantic v2)
-        if "class Config:" in content and ("BaseSettings" in content or "BaseModel" in content):
+        if "class Config:" in content and "BaseSettings" in content:
             patched = re.sub(
                 r'    class Config:\s*\n(\s+env_file\s*=\s*["\']\.env["\']\s*\n)?(\s+case_sensitive\s*=\s*\w+\s*\n)?',
-                '    model_config = {"env_file": ".env", "case_sensitive": True}\n',
+                '    model_config = {"env_file": ".env", "case_sensitive": True, "extra": "ignore"}\n',
+                content,
+            )
+            if patched != content:
+                content = patched
+                fixes_count += 1
+        elif "class Config:" in content and "BaseModel" in content:
+            patched = re.sub(
+                r'    class Config:\s*\n(\s+env_file\s*=\s*["\']\.env["\']\s*\n)?(\s+case_sensitive\s*=\s*\w+\s*\n)?',
+                '    model_config = {"case_sensitive": True}\n',
                 content,
             )
             if patched != content:
@@ -431,6 +604,11 @@ class DebuggerAgent:
         """Apply auto-fixes to frontend file content."""
         original_content = content
         fixes_count = 0
+
+        repaired_lucide = self._repair_lucide_imports(content)
+        if repaired_lucide != content:
+            content = repaired_lucide
+            fixes_count += 1
         
         # Fix missing Vite proxy configuration
         if rel_path == "vite.config.ts" and "proxy:" not in content:
@@ -752,6 +930,8 @@ class DebuggerAgent:
         if not backend_path.exists():
             fix_summary["errors_fixed"].append("Backend path does not exist")
             return fix_summary
+
+        self._report("Scanning backend files", scope="backend")
         
         # Process all Python files in backend
         for py_file in backend_path.rglob("*.py"):
@@ -775,6 +955,12 @@ class DebuggerAgent:
                     py_file.write_text(fixed_content, encoding="utf-8")
                     fix_summary["files_fixed"] += 1
                     fix_summary["errors_fixed"].append(f"Fixed {rel_path}")
+                    self._report(
+                        f"Fixed backend file {rel_path}",
+                        scope="backend",
+                        files_fixed=fix_summary["files_fixed"],
+                        files_processed=fix_summary["files_processed"] + 1,
+                    )
                     if self.verbose:
                         print(f"[Debugger] Fixed: {rel_path}")
                 
@@ -790,6 +976,12 @@ class DebuggerAgent:
         if router_fixes:
             fix_summary["files_fixed"] += 1
             fix_summary["errors_fixed"].append(f"main.py: registered {router_fixes} missing router(s)")
+            self._report(
+                f"Registered {router_fixes} backend router(s)",
+                scope="backend",
+                files_fixed=fix_summary["files_fixed"],
+                files_processed=fix_summary["files_processed"],
+            )
 
         return fix_summary
 
@@ -913,10 +1105,12 @@ class DebuggerAgent:
         fix_summary = {
             "files_processed": 0,
             "files_fixed": 0,
+            "changed_files": [],
             "errors": []
         }
         
         package_json_modified = False
+        self._report("Scanning frontend files", scope="frontend")
         
         try:
             for file in frontend_path.rglob("*"):
@@ -931,6 +1125,13 @@ class DebuggerAgent:
                         if fixed_content != original_content:
                             file.write_text(fixed_content, encoding="utf-8")
                             fix_summary["files_fixed"] += 1
+                            fix_summary["changed_files"].append(rel_path)
+                            self._report(
+                                f"Fixed frontend file {rel_path}",
+                                scope="frontend",
+                                files_fixed=fix_summary["files_fixed"],
+                                files_processed=fix_summary["files_processed"] + 1,
+                            )
                             
                             # Check if package.json was modified
                             if rel_path == "package.json":
@@ -947,6 +1148,13 @@ class DebuggerAgent:
         if stubs_created:
             fix_summary["files_fixed"] += len(stubs_created)
             fix_summary.setdefault("stubs_created", stubs_created)
+            fix_summary["changed_files"].extend(stubs_created)
+            self._report(
+                f"Created {len(stubs_created)} critical frontend stub(s)",
+                scope="frontend",
+                files_fixed=fix_summary["files_fixed"],
+                files_processed=fix_summary["files_processed"],
+            )
 
         return fix_summary
     def fix_entire_project(self, project_path: Path) -> dict:
@@ -956,6 +1164,7 @@ class DebuggerAgent:
         
         if self.verbose:
             print(f"[Debugger] Starting project fix: {project_path}")
+        self._report("Debugger started", scope="project")
         
         backend_summary = self.fix_project_backend(backend_path)
         frontend_summary = self.fix_project_frontend(frontend_path)
@@ -986,8 +1195,172 @@ class DebuggerAgent:
             print(f"  - Files processed: {result['total_files_processed']}")
             print(f"  - Files fixed: {result['total_files_fixed']}")
             print(f"  - Validation errors: {len(backend_errors) + len(frontend_errors)}")
+        self._report(
+            "Debugger finished",
+            scope="project",
+            files_fixed=result["total_files_fixed"],
+            files_processed=result["total_files_processed"],
+            issues_found=len(backend_errors) + len(frontend_errors),
+        )
         
         return result
+
+    def quick_fix_frontend_build_error(self, frontend_path: Path, build_output: str = "") -> dict:
+        """
+        Fast targeted repair pass used by preview when vite build fails.
+        """
+        self._report("Analyzing frontend build failure", scope="frontend")
+        target_file: Optional[Path] = None
+        match = re.search(r"frontend[\\/](src[\\/][^:\n]+?\.(?:ts|tsx|js|jsx))", build_output or "")
+        if match:
+            target_file = frontend_path / match.group(1).replace("\\", "/")
+
+        if target_file and target_file.exists():
+            rel_path = str(target_file.relative_to(frontend_path)).replace("\\", "/")
+            original = target_file.read_text(encoding="utf-8", errors="replace")
+            fixed = self.auto_fix_frontend_file(original, rel_path)
+            if fixed != original:
+                target_file.write_text(fixed, encoding="utf-8")
+                self._report("Applied targeted frontend repair", scope="frontend", files_fixed=1)
+                return {"files_fixed": 1, "target": rel_path}
+
+        summary = self.fix_project_frontend(frontend_path)
+        return {
+            "files_fixed": summary.get("files_fixed", 0),
+            "target": None,
+            "changed_files": summary.get("changed_files", []),
+        }
+
+    def quick_fix_frontend_runtime_error(self, frontend_path: Path, runtime_output: str = "") -> dict:
+        """
+        Fast repair pass used after the preview has loaded and the browser reports
+        a client-side runtime error.
+        """
+        self._report("Analyzing frontend UI runtime failure", scope="frontend")
+        runtime_text = runtime_output or ""
+        missing_exports = {
+            match.group(1).strip()
+            for match in re.finditer(
+                r"does not provide an export named ['\"]([^'\"]+)['\"]",
+                runtime_text,
+            )
+            if match.group(1).strip()
+        }
+        changed_files: list[str] = []
+
+        if missing_exports:
+            for file in frontend_path.rglob("*"):
+                if not file.is_file() or file.suffix not in [".ts", ".tsx", ".js", ".jsx"]:
+                    continue
+                try:
+                    rel_path = str(file.relative_to(frontend_path)).replace("\\", "/")
+                    original = file.read_text(encoding="utf-8", errors="replace")
+                    repaired = self._repair_lucide_imports(original, missing_exports)
+                    repaired = self.auto_fix_frontend_file(repaired, rel_path)
+                    if repaired != original:
+                        file.write_text(repaired, encoding="utf-8")
+                        changed_files.append(rel_path)
+                        self._report(
+                            f"Fixed frontend runtime file {rel_path}",
+                            scope="frontend",
+                            files_fixed=len(changed_files),
+                        )
+                except Exception:
+                    continue
+
+        if changed_files:
+            return {
+                "files_fixed": len(changed_files),
+                "issues_found": len(missing_exports),
+                "changed_files": changed_files,
+                "runtime_excerpt": runtime_text[-300:],
+            }
+
+        summary = self.fix_project_frontend(frontend_path)
+        return {
+            "files_fixed": summary.get("files_fixed", 0),
+            "issues_found": len(missing_exports),
+            "changed_files": summary.get("changed_files", []),
+            "runtime_excerpt": runtime_text[-300:],
+        }
+
+    def quick_fix_backend_runtime_error(self, backend_path: Path, runtime_output: str = "") -> dict:
+        """
+        Fast targeted repair pass used by preview when the backend fails to bind.
+        """
+        self._report("Analyzing backend startup failure", scope="backend")
+        summary = self.fix_project_backend(backend_path)
+        return {
+            "files_fixed": summary.get("files_fixed", 0),
+            "issues_found": len(summary.get("syntax_errors", [])),
+            "runtime_excerpt": (runtime_output or "")[-300:],
+        }
+
+    def execute_preview(
+        self,
+        project_id: str,
+        mode: str = "local",
+        local_runner: Optional[Callable[[str], dict]] = None,
+        step_callback: Optional[Callable[[str], None]] = None,
+    ) -> dict:
+        selected_mode = "docker" if (mode or "").strip().lower() == "docker" else "local"
+
+        if selected_mode == "docker":
+            docker_runner = _load_docker_runner_module()
+            self._report("Starting Docker preview execution", scope="execution", mode=selected_mode)
+            result = docker_runner.run_project_docker(
+                project_id,
+                reporter=lambda message: self._report(
+                    message,
+                    scope="execution",
+                    mode=selected_mode,
+                ),
+                step_callback=step_callback,
+            )
+            try:
+                logs = docker_runner.capture_container_logs(project_id, timeout=6)
+            except Exception:
+                logs = ""
+            result["logs"] = logs
+            result["execution_mode"] = selected_mode
+            return result
+
+        if local_runner is None:
+            raise ValueError("local_runner is required for local preview execution")
+
+        self._report("Starting local preview execution", scope="execution", mode=selected_mode)
+        result = local_runner(project_id)
+        result["execution_mode"] = selected_mode
+        return result
+
+    def collect_execution_logs(
+        self,
+        project_id: str,
+        mode: str = "local",
+        local_log_reader: Optional[Callable[[], str]] = None,
+        timeout: int = 10,
+    ) -> str:
+        selected_mode = "docker" if (mode or "").strip().lower() == "docker" else "local"
+        if selected_mode == "docker":
+            docker_runner = _load_docker_runner_module()
+            return docker_runner.capture_container_logs(project_id, timeout=timeout)
+        if local_log_reader is None:
+            return ""
+        return local_log_reader()
+
+    def stop_execution(self, project_id: Optional[str] = None, mode: str = "local") -> dict:
+        selected_mode = "docker" if (mode or "").strip().lower() == "docker" else "local"
+        if selected_mode == "docker":
+            docker_runner = _load_docker_runner_module()
+            containers = docker_runner.stop_project_docker(project_id)
+            self._report(
+                "Stopped Docker preview containers",
+                scope="execution",
+                mode=selected_mode,
+                containers_removed=len(containers),
+            )
+            return {"ok": True, "containers_removed": len(containers)}
+        return {"ok": True, "containers_removed": 0}
 
     def analyze_performance(self, project_path: Path) -> Dict[str, Any]:
         """Analyze project for performance issues and optimizations."""

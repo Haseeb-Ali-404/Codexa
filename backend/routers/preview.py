@@ -9,8 +9,10 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from fastapi import APIRouter
+from fastapi import Body
 from fastapi.responses import StreamingResponse
 from bson import ObjectId
+from models.schemas import PreviewStartPayload
 from utils.database_util import files_col
 import psutil
 from core.agents.debugger_agent import DebuggerAgent
@@ -61,6 +63,7 @@ _PREVIEW_STATE: dict = {
     "started_at": None,
     "elapsed": None,
     "project_id": None,
+    "execution_mode": "local",
 }
 _LOG_LINES: list = []
 _STATE_LOCK = threading.Lock()
@@ -81,12 +84,26 @@ STEP_LABELS: dict = {
 STEP_ORDER = list(STEP_LABELS.keys())
 
 
+def _normalize_execution_mode(mode: str | None) -> str:
+    return "docker" if (mode or "").strip().lower() == "docker" else "local"
+
+
 def _log(msg: str) -> None:
     print(msg)
     with _STATE_LOCK:
         _LOG_LINES.append({"t": time.time(), "msg": msg})
         while len(_LOG_LINES) > 500:
             _LOG_LINES.pop(0)
+
+
+def _debugger_log_reporter(message: str, payload: dict) -> None:
+    scope = payload.get("scope")
+    prefix = "[Preview][Debugger]"
+    if scope == "frontend":
+        prefix = "[Preview][Debugger][Frontend]"
+    elif scope == "backend":
+        prefix = "[Preview][Debugger][Backend]"
+    _log(f"{prefix} {message}")
 
 
 def _advance(step_id: str) -> None:
@@ -764,6 +781,10 @@ def _sanitize_env_file(env_file: Path) -> None:
         key_upper = key.strip().upper()
         val = val.strip()
 
+        if key_upper.startswith("VITE_"):
+            changed = True
+            continue
+
         new_val = None
 
         # MongoDB URI with angle-bracket placeholder
@@ -795,6 +816,9 @@ def _sanitize_env_file(env_file: Path) -> None:
     if changed:
         env_file.write_text("".join(new_lines), encoding="utf-8")
         _log("[Preview] .env placeholders sanitized for local preview")
+
+
+
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1010,7 +1034,7 @@ def _repair_jsx_after_debugger(frontend_path: Path) -> int:
 
 
 _CONFIG_PY_TEMPLATE = """\
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -1018,8 +1042,7 @@ class Settings(BaseSettings):
     DB_NAME: str = "app_db"
     SECRET_KEY: str = "changeme-in-production"
 
-    class Config:
-        env_file = ".env"
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 
 settings = Settings()
@@ -1090,6 +1113,30 @@ def _ensure_backend_essentials(backend_path: Path) -> None:
     if not config_file.exists():
         config_file.write_text(_CONFIG_PY_TEMPLATE, encoding="utf-8")
         _log("[Preview] Created backend/app/config.py (fallback)")
+    else:
+        try:
+            config_src = config_file.read_text(encoding="utf-8", errors="replace")
+            patched_src = config_src
+
+            if "BaseSettings" in patched_src and "SettingsConfigDict" not in patched_src:
+                patched_src = patched_src.replace(
+                    "from pydantic_settings import BaseSettings",
+                    "from pydantic_settings import BaseSettings, SettingsConfigDict",
+                )
+
+            if "BaseSettings" in patched_src and "extra" not in patched_src:
+                patched_src = re.sub(
+                    r'class Config:\s*\n(?:\s+env_file\s*=\s*["\']\.env["\']\s*\n)?(?:\s+case_sensitive\s*=\s*\w+\s*\n)?',
+                    'model_config = SettingsConfigDict(env_file=".env", extra="ignore")\n',
+                    patched_src,
+                    count=1,
+                )
+
+            if patched_src != config_src:
+                config_file.write_text(patched_src, encoding="utf-8")
+                _log("[Preview] Patched backend/app/config.py to ignore extra env keys")
+        except Exception as e:
+            _log(f"[Preview] config.py patch error: {e}")
 
     database_file = app_dir / "database.py"
     if not database_file.exists():
@@ -1152,6 +1199,7 @@ def run_project(project_id: str) -> dict:
                 "started_at": time.time(),
                 "elapsed": 0.0,
                 "project_id": project_id,
+                "execution_mode": "local",
             })
         return {"ok": True, "frontend": frontend_url, "backend": backend_url}
 
@@ -1170,9 +1218,9 @@ def run_project(project_id: str) -> dict:
             "started_at": time.time(),
             "elapsed": None,
             "project_id": project_id,
+            "execution_mode": "local",
         })
         _LOG_LINES.clear()
-
     if is_warm_restart:
         _log(f"[Preview] 🔄 Warm restart for project {project_id} — skipping debugger/fix loops")
     else:
@@ -1216,11 +1264,11 @@ def run_project(project_id: str) -> dict:
 
     # ── Step: Auto-fix + validation (skipped on warm restart) ───────────────
     fix_result: dict = {"total_files_fixed": 0}
+    preview_debugger = DebuggerAgent(verbose=False, reporter=_debugger_log_reporter)
     if not is_warm_restart:
         _advance("fixing")
-        debugger = DebuggerAgent(verbose=False)
         try:
-            fix_result = debugger.fix_entire_project(project_path)
+            fix_result = preview_debugger.fix_entire_project(project_path)
             _log(f"[Preview] Debugger: {fix_result['total_files_fixed']} files fixed")
         except Exception as e:
             _log(f"[Preview] Debugger error (non-fatal): {e}")
@@ -1271,11 +1319,48 @@ def run_project(project_id: str) -> dict:
                 rel = found[0].relative_to(backend_path)
                 uvicorn_module = str(rel.with_suffix("")).replace("\\", ".").replace("/", ".") + ":app"
 
+    backend_start_excerpt = ""
+
+    def _spawn_backend(extra_args: list[str] | None = None, label: str = "Starting backend") -> None:
+        nonlocal backend_start_excerpt
+        cmd = [
+            sys.executable,
+            "-m",
+            "uvicorn",
+            uvicorn_module,
+            "--host",
+            "0.0.0.0",
+            "--port",
+            str(BACKEND_PORT),
+            "--log-level",
+            "warning",
+        ]
+        if extra_args:
+            cmd.extend(extra_args)
+        _log(f"[Preview] {label} ({uvicorn_module}) on :{BACKEND_PORT}...")
+        globals()["CURRENT_BACKEND_PROCESS"] = subprocess.Popen(
+            cmd,
+            cwd=str(backend_path),
+            shell=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        try:
+            CURRENT_BACKEND_PROCESS.wait(timeout=3.0)
+            _, _be_err = CURRENT_BACKEND_PROCESS.communicate()
+            backend_start_excerpt = _be_err.decode("utf-8", errors="ignore")[-1200:]
+            _log(f"[Preview] Backend exited immediately - stderr:\n{backend_start_excerpt}")
+            globals()["CURRENT_BACKEND_PROCESS"] = None
+        except subprocess.TimeoutExpired:
+            _log("[Preview] Backend process alive after 3 s - waiting for port bind...")
+
     try:
-        _log(f"[Preview] Starting backend ({uvicorn_module}) on :{BACKEND_PORT}…")
+        _spawn_backend()
+        if CURRENT_BACKEND_PROCESS is None:
+            _log(f"[Preview] Retrying backend start ({uvicorn_module}) on :{BACKEND_PORT}…")
         # Use sys.executable -m uvicorn so we always find uvicorn in the current
         # Python environment regardless of PATH (shell=False + absolute interpreter).
-        CURRENT_BACKEND_PROCESS = subprocess.Popen(
+        CURRENT_BACKEND_PROCESS = CURRENT_BACKEND_PROCESS or subprocess.Popen(
             [sys.executable, "-m", "uvicorn", uvicorn_module,
              "--host", "0.0.0.0", "--port", str(BACKEND_PORT),
              "--log-level", "warning"],
@@ -1335,6 +1420,32 @@ def run_project(project_id: str) -> dict:
                 combined = (clean_err + "\n" + clean_out).strip()
                 _log(f"[Preview] vite build failed rc={br.returncode} (falling back to dev server):\n{combined[-1800:]}")
                 _log(f"[Preview] Full build log saved to: {frontend_path / '.vite-build.log'}")
+                try:
+                    repair = preview_debugger.quick_fix_frontend_build_error(frontend_path, combined)
+                    if repair.get("files_fixed"):
+                        _log(f"[Preview] Debugger applied {repair['files_fixed']} fast frontend fix(es) - retrying vite build")
+                        retry = subprocess.run(
+                            build_cmd_list,
+                            cwd=str(frontend_path),
+                            shell=True,
+                            capture_output=True,
+                            text=True,
+                            timeout=120,
+                            encoding="utf-8",
+                            errors="replace",
+                        )
+                        try:
+                            (frontend_path / ".vite-build.log").write_text(
+                                f"=== RETRY STDOUT ===\n{retry.stdout or ''}\n=== RETRY STDERR ===\n{retry.stderr or ''}",
+                                encoding="utf-8",
+                            )
+                        except Exception:
+                            pass
+                        if retry.returncode == 0 and dist_index.exists():
+                            _log("[Preview] vite build retry successful - static files ready")
+                            use_static = True
+                except Exception as repair_error:
+                    _log(f"[Preview] Frontend fast-fix retry failed (non-fatal): {repair_error}")
         except subprocess.TimeoutExpired:
             _log("[Preview] vite build timed out — falling back to dev server")
         except Exception as e:
@@ -1442,6 +1553,23 @@ def run_project(project_id: str) -> dict:
         _log(f"[Preview] Backend ready on :{BACKEND_PORT}")
     else:
         _log(f"[Preview] Backend not ready on :{BACKEND_PORT} (non-fatal, continuing frontend-only)")
+        try:
+            retry_summary = preview_debugger.quick_fix_backend_runtime_error(
+                backend_path,
+                backend_start_excerpt,
+            )
+            if retry_summary.get("files_fixed"):
+                _log(f"[Preview] Debugger applied {retry_summary['files_fixed']} fast backend fix(es) - retrying once with lifespan off")
+                if CURRENT_BACKEND_PROCESS and CURRENT_BACKEND_PROCESS.poll() is None:
+                    CURRENT_BACKEND_PROCESS.terminate()
+                    time.sleep(0.8)
+                _kill_port(BACKEND_PORT)
+                _spawn_backend(["--lifespan", "off"], label="Retrying backend")
+                backend_started = _wait_backend_port(20.0)
+                if backend_started:
+                    _log(f"[Preview] Backend recovery successful on :{BACKEND_PORT}")
+        except Exception as backend_retry_error:
+            _log(f"[Preview] Backend recovery failed (non-fatal): {backend_retry_error}")
 
     # ── Done ─────────────────────────────────────────────────────────────────
     CURRENT_PROJECT_ID = project_id
@@ -1462,6 +1590,7 @@ def run_project(project_id: str) -> dict:
         "ok": True,
         "frontend": frontend_url,
         "backend": backend_url,
+        "execution_mode": "local",
         "debugger_summary": {"files_fixed": fix_result.get("total_files_fixed", 0)},
     }
 
@@ -1470,18 +1599,137 @@ def run_project(project_id: str) -> dict:
 # API ENDPOINTS
 # ──────────────────────────────────────────────────────────────────────────────
 
+def _recent_log_text() -> str:
+    with _STATE_LOCK:
+        return "\n".join(entry["msg"] for entry in _LOG_LINES[-120:])
+
+
+def _stop_docker_preview(project_id: str | None) -> None:
+    if not project_id:
+        return
+    try:
+        DebuggerAgent(verbose=False).stop_execution(project_id=project_id, mode="docker")
+    except Exception as exc:
+        _log(f"[Preview] Docker cleanup warning: {exc}")
+
+
+def run_project_for_mode(project_id: str, execution_mode: str = "local") -> dict:
+    global CURRENT_PROJECT_ID
+
+    selected_mode = _normalize_execution_mode(execution_mode)
+    if selected_mode == "local":
+        _stop_docker_preview(None)
+        result = run_project(project_id)
+        with _STATE_LOCK:
+            _PREVIEW_STATE["execution_mode"] = "local"
+        result["execution_mode"] = "local"
+        return result
+
+    with _STATE_LOCK:
+        active_docker_project = (
+            _PREVIEW_STATE.get("project_id")
+            if _PREVIEW_STATE.get("execution_mode") == "docker"
+            else None
+        )
+        _PREVIEW_STATE.update({
+            "phase": "starting",
+            "step": "init",
+            "steps_done": ["init"],
+            "error": None,
+            "frontend_url": None,
+            "backend_url": None,
+            "started_at": time.time(),
+            "elapsed": None,
+            "project_id": project_id,
+            "execution_mode": selected_mode,
+        })
+        _LOG_LINES.clear()
+
+    _log(f"[Preview] Docker execution selected for project {project_id}")
+    stop_current_project()
+    _stop_docker_preview(active_docker_project)
+    _kill_port(FRONTEND_PORT)
+    _kill_port(BACKEND_PORT)
+
+    preview_debugger = DebuggerAgent(verbose=False, reporter=_debugger_log_reporter)
+    try:
+        result = preview_debugger.execute_preview(
+            project_id,
+            mode=selected_mode,
+            step_callback=_advance,
+        )
+        docker_logs = ""
+        if not result.get("logs_streamed"):
+            docker_logs = result.get("logs") or preview_debugger.collect_execution_logs(
+                project_id,
+                mode=selected_mode,
+                timeout=6,
+            )
+    except Exception as exc:
+        error_text = str(exc)
+        _log(f"[Preview] Docker execution failed: {error_text}")
+        try:
+            docker_logs = preview_debugger.collect_execution_logs(
+                project_id,
+                mode=selected_mode,
+                timeout=6,
+            )
+        except Exception:
+            docker_logs = ""
+        if docker_logs:
+            for line in docker_logs.splitlines()[-80:]:
+                _log(f"[Docker] {line}")
+        _set_error(error_text)
+        with _STATE_LOCK:
+            _PREVIEW_STATE["execution_mode"] = selected_mode
+        return {"ok": False, "error": error_text, "execution_mode": selected_mode}
+
+    if docker_logs:
+        for line in docker_logs.splitlines()[-80:]:
+            _log(f"[Docker] {line}")
+
+    frontend_url = result.get("frontend") or f"http://localhost:{FRONTEND_PORT}"
+    backend_url = result.get("backend")
+    CURRENT_PROJECT_ID = project_id
+    _set_ready(frontend_url, backend_url)
+    with _STATE_LOCK:
+        _PREVIEW_STATE["execution_mode"] = selected_mode
+    _log(
+        f"[Preview] Docker preview ready - {frontend_url}"
+        + ("" if backend_url else " (frontend-only, backend unavailable)")
+    )
+
+    return {
+        "ok": True,
+        "frontend": frontend_url,
+        "backend": backend_url,
+        "execution_mode": selected_mode,
+    }
+
+
 @router.post("/preview/start/{project_id}")
-def preview_start(project_id: str):
+def preview_start(project_id: str, payload: PreviewStartPayload | None = Body(default=None)):
     """Start preview build in a background thread. Returns immediately."""
-    thread = threading.Thread(target=run_project, args=(project_id,), daemon=True)
+    execution_mode = _normalize_execution_mode(payload.mode if payload else None)
+    thread = threading.Thread(
+        target=run_project_for_mode,
+        args=(project_id, execution_mode),
+        daemon=True,
+    )
     thread.start()
-    return {"ok": True, "status": "starting", "project_id": project_id}
+    return {
+        "ok": True,
+        "status": "starting",
+        "project_id": project_id,
+        "execution_mode": execution_mode,
+    }
 
 
 @router.post("/preview/full/{project_id}")
-def preview_full(project_id: str):
+def preview_full(project_id: str, payload: PreviewStartPayload | None = Body(default=None)):
     """Blocking preview start — waits until ready. Kept for backwards compat."""
-    result = run_project(project_id)
+    execution_mode = _normalize_execution_mode(payload.mode if payload else None)
+    result = run_project_for_mode(project_id, execution_mode)
     return {"project_id": project_id, **result}
 
 
@@ -1509,6 +1757,7 @@ async def preview_events():
                 "elapsed": state["elapsed"],
                 "started_at": state["started_at"],
                 "project_id": state["project_id"],
+                "execution_mode": state.get("execution_mode", "local"),
                 "logs": logs,
             }
             payload = json.dumps(data)
@@ -1535,13 +1784,16 @@ def preview_logs():
     with _STATE_LOCK:
         return {"logs": [entry["msg"] for entry in _LOG_LINES[-100:]]}
 
-
 @router.post("/preview/stop/{project_id}")
 def stop_preview(project_id: str):
+    active_mode = _normalize_execution_mode(_PREVIEW_STATE.get("execution_mode"))
+    active_project_id = _PREVIEW_STATE.get("project_id") or project_id
     stop_current_project()
+    _stop_docker_preview(active_project_id if active_mode == "docker" else None)
     with _STATE_LOCK:
         _PREVIEW_STATE.update({"phase": "idle", "step": None, "steps_done": [], "error": None,
-                                "frontend_url": None, "backend_url": None, "project_id": None})
+                                "frontend_url": None, "backend_url": None, "project_id": None,
+                                "execution_mode": "local"})
     return {"ok": True, "status": "stopped"}
 
 
@@ -1553,6 +1805,7 @@ def preview_status():
         **state,
         "step_labels": STEP_LABELS,
         "step_order": STEP_ORDER,
+        "execution_mode": state.get("execution_mode", "local"),
         # Legacy fields kept for backwards compat
         "status": state["phase"],
         "frontend_port": FRONTEND_PORT,

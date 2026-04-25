@@ -24,6 +24,7 @@ import type { DeveloperPipelineState } from "./DeveloperStageMessage";
 import { GeneratorMessage } from "./GeneratorMessage";
 import type { GeneratorProgress } from "./GeneratorMessage";
 import { ValidatorMessage } from "./ValidatorMessage";
+import type { DebuggerState } from "./ValidatorMessage";
 import { ProjectExplanationCard } from "./ProjectExplanationCard";
 
 interface ChatMessageProps {
@@ -39,6 +40,7 @@ interface ChatMessageProps {
     generatorProgress?: GeneratorProgress;
     validationPassed?: boolean | null;
     architectureData?: Record<string, unknown>;
+    debuggerState?: DebuggerState;
     code?: {
       language: string;
       content: string;
@@ -237,7 +239,11 @@ export function ChatMessage({ message, index, searchHighlight }: ChatMessageProp
           ) : message.agent === "generator" ? (
             <GeneratorMessage progress={message.generatorProgress} />
           ) : message.agent === "validator" ? (
-            <ValidatorMessage passed={message.validationPassed} architectureData={message.architectureData} />
+            <ValidatorMessage
+              passed={message.validationPassed}
+              architectureData={message.architectureData}
+              debuggerState={message.debuggerState}
+            />
           ) : message.agent === "architect" && message.architectureData ? (
             <ProjectExplanationCard data={message.architectureData} projectTitle={title || undefined} />
           ) : message.agent === "planner" ? (

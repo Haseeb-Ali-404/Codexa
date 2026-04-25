@@ -1,4 +1,5 @@
 import json
+import re
 
 from core.providers.base import ChatMessage, LLMCallOptions
 from core.utils.resilient import FallbackLLMClient
@@ -61,6 +62,44 @@ User message:
         self._llm = llm_client
         self._opts = llm_options
 
+    _TYPE_RE = re.compile(
+        r'"type"\s*:\s*"?(project|edit|conversation)?',
+        re.IGNORECASE,
+    )
+
+    def _heuristic_intent(self, message: str, *, has_project: bool = False) -> dict:
+        low = (message or "").strip().lower()
+        if not low:
+            return {
+                "type": "conversation",
+                "reason": "empty_message",
+            }
+
+        if self._is_strong_project_signal(low):
+            if has_project:
+                return {
+                    "type": "edit",
+                    "reason": "project_prompt_in_existing_project_chat",
+                }
+            return {
+                "type": "project",
+                "reason": "keyword_project_signal",
+            }
+
+        return {
+            "type": "conversation",
+            "reason": "heuristic_conversation_fallback",
+        }
+
+    def _extract_partial_type(self, raw: str) -> str | None:
+        if not raw:
+            return None
+        match = self._TYPE_RE.search(raw)
+        if not match:
+            return None
+        intent_type = (match.group(1) or "").strip().lower()
+        return intent_type or None
+
     def classify(self, message: str, *, has_project: bool = False):
         context_note = (
             "A generated project (files) is already linked to this chat."
@@ -100,8 +139,14 @@ User message:
         try:
             return json.loads(clean)
         except Exception as e:
+            partial_type = self._extract_partial_type(clean)
+            if partial_type in ("project", "edit", "conversation"):
+                return {
+                    "type": partial_type,
+                    "reason": "partial_json_recovery",
+                }
+
             # Try to extract JSON object from text
-            import re
             match = re.search(r'\{[^}]+\}', clean)
             if match:
                 try:
@@ -109,10 +154,7 @@ User message:
                 except:
                     pass
             print("[Classifier] JSON decode failed:", clean[:100], e)
-            return {
-                "type": "conversation",
-                "reason": "invalid_json",
-            }
+            return self._heuristic_intent(message, has_project=has_project)
 
     # Strong greenfield signals — if any match and there's no existing project, always "project".
     _PROJECT_SIGNALS = (
@@ -138,13 +180,10 @@ User message:
         print(intent)
         t = intent.get("type")
 
-        # Deterministic override: if no project exists and message has strong build signals,
-        # never let the LLM wrongly return "conversation".
-        if not has_project and t == "conversation" and self._is_strong_project_signal(message):
-            return {
-                "type": "project",
-                "reason": "keyword_override_conversation_to_project",
-            }
+        if t == "conversation":
+            heuristic = self._heuristic_intent(message, has_project=has_project)
+            if heuristic.get("type") != "conversation":
+                return heuristic
 
         if t == "edit" and not has_project:
             return {

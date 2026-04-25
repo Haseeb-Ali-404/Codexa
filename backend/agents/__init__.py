@@ -26,9 +26,20 @@ class DeveloperAgent:
         self._orchestrator = _make_agent("orchestrator", model_name, **kwargs)
         self._fallback = _make_agent("developer", model_name, **kwargs)
 
-    def generate_project(self, project_name: str, steps: list, user_message: str):
+    def generate_project(
+        self,
+        project_name: str,
+        steps: list,
+        user_message: str,
+        developer_plan: dict | None = None,
+    ):
         try:
-            result = self._orchestrator.generate_project(project_name, steps, user_message)
+            result = self._orchestrator.generate_project(
+                project_name,
+                steps,
+                user_message,
+                developer_plan=developer_plan,
+            )
             if result and "structure" in result and result["structure"]:
                 return result
             print("[DeveloperAgent] Orchestrator returned empty structure, falling back")
@@ -36,9 +47,20 @@ class DeveloperAgent:
             print(f"[DeveloperAgent] Orchestrator failed ({e}), falling back to single-call")
         return self._fallback.generate_project(project_name, steps, user_message)
 
-    async def astream_developer_text(self, project_name: str, steps: list, user_message: str):
+    async def astream_developer_text(
+        self,
+        project_name: str,
+        steps: list,
+        user_message: str,
+        developer_plan: dict | None = None,
+    ):
         try:
-            async for chunk in self._orchestrator.astream_developer_text(project_name, steps, user_message):
+            async for chunk in self._orchestrator.astream_developer_text(
+                project_name,
+                steps,
+                user_message,
+                developer_plan=developer_plan,
+            ):
                 yield chunk
         except Exception as e:
             print(f"[DeveloperAgent] Orchestrator stream failed ({e}), falling back")
@@ -122,15 +144,21 @@ class ClassifierAgent:
 
 class DebuggerAgent:
     def __init__(self, verbose: bool = True, **kwargs):
-        self._inner = _DebuggerAgentCore(verbose=verbose)
+        self._inner = _DebuggerAgentCore(verbose=verbose, **kwargs)
 
     def validate(self, project_json: dict) -> bool:
         return self._inner.validate(project_json)
+
+    def validate_project_json_with_summary(self, project_json: dict) -> dict:
+        return self._inner.validate_project_json_with_summary(project_json)
 
     def fix_flat_files(self, flat_files: list) -> dict:
         """Scan flat file list, inject missing npm/pip deps, return report."""
         from core.validation.dependency_injector import fix_flat_files as _fix
         return _fix(flat_files)
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
 
 
 class Integrator:

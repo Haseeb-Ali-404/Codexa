@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Sidebar } from "./Sidebar";
 import { TopBar } from "./TopBar";
-import { PreviewPanel } from "./PreviewPanel";
+import { ExecutionModeModal, PreviewPanel, type ExecutionMode } from "./PreviewPanel";
 import { CodePanel } from "./CodePanel";
 import { SplitPanel } from "./SplitPanel";
 import { ChatContainer } from "../chat/ChatContainer";
@@ -15,6 +15,9 @@ import {
 import { useAppData } from "@/context/useAppData";
 import { ChatSearchProvider } from "@/context/ChatSearchContext";
 import { FileTree } from "../project/FileTree";
+
+type PreviewLaunchTarget = "auto" | "preview" | "split";
+const PREVIEW_MODE_STORAGE_KEY = "codexa-preview-execution-mode";
 
 export function DashboardLayout() {
   const getSavedTheme = () => {
@@ -52,6 +55,16 @@ export function DashboardLayout() {
   const [splitOpen, setSplitOpen] = useState(false);
 
   const [previewUrl, setPreviewUrl] = useState("");
+  const [executionModeModalOpen, setExecutionModeModalOpen] = useState(false);
+  const [selectedExecutionMode, setSelectedExecutionMode] = useState<ExecutionMode>(() => {
+    const saved = localStorage.getItem(PREVIEW_MODE_STORAGE_KEY);
+    return saved === "local" || saved === "docker" ? saved : "docker";
+  });
+  const [pendingPreviewTarget, setPendingPreviewTarget] = useState<PreviewLaunchTarget | null>(null);
+  const [pendingPreviewProjectId, setPendingPreviewProjectId] = useState<string | null>(null);
+  const [activePreviewProjectId, setActivePreviewProjectId] = useState<string | null>(null);
+  const [isStartingPreview, setIsStartingPreview] = useState(false);
+  const activePreviewProjectIdRef = useRef<string | null>(null);
 
   // Code + HTML preview storage
   const [generatedCode, setGeneratedCode] = useState("");
@@ -101,30 +114,78 @@ export function DashboardLayout() {
   }, []);
 
   useEffect(() => {
-    if (!singleProjectId) return;
+    if (!singleProjectId || singleProjectId === activePreviewProjectId) return;
 
-    startPreview(singleProjectId);
+    setPendingPreviewProjectId(singleProjectId);
+    setPendingPreviewTarget("auto");
+    setExecutionModeModalOpen(true);
+  }, [activePreviewProjectId, singleProjectId]);
 
+  useEffect(() => {
+    activePreviewProjectIdRef.current = activePreviewProjectId;
+  }, [activePreviewProjectId]);
+
+  useEffect(() => {
     return () => {
-      stopPreview(singleProjectId);
+      const previewProjectId = activePreviewProjectIdRef.current;
+      if (!previewProjectId) return;
+      void fetch(`http://localhost:8000/preview/stop/${previewProjectId}`, {
+        method: "POST",
+      }).catch(() => undefined);
     };
-  }, [singleProjectId]);
+  }, []);
 
-  const startPreview = async (project_Id: string) => {
+  const closeExecutionModeModal = () => {
+    setExecutionModeModalOpen(false);
+    setPendingPreviewProjectId(null);
+    setPendingPreviewTarget(null);
+  };
+
+  const startPreview = async (
+    project_Id: string,
+    mode: ExecutionMode,
+    target: PreviewLaunchTarget = "preview",
+  ) => {
     if (!project_Id) return;
 
     // Open the panel immediately — the URL arrives via SSE inside PreviewPanel
+    if (target === "split") {
+      setSplitOpen(true);
+      setPreviewOpen(true);
+      setCodeOpen(true);
+    } else {
+      if (target === "preview") setSplitOpen(false);
+      setPreviewOpen(true);
+    }
+
     setPreviewUrl("");
-    setPreviewOpen(true);
+    setIsStartingPreview(true);
 
     try {
       await fetch(
         `http://localhost:8000/preview/start/${project_Id}`,
-        { method: "POST" },
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ mode }),
+        },
       );
+      setActivePreviewProjectId(project_Id);
     } catch (e) {
       console.error("Preview start error:", e);
+    } finally {
+      localStorage.setItem(PREVIEW_MODE_STORAGE_KEY, mode);
+      setSelectedExecutionMode(mode);
+      setIsStartingPreview(false);
+      closeExecutionModeModal();
     }
+  };
+
+  const requestPreviewStart = (project_Id: string, target: PreviewLaunchTarget) => {
+    if (!project_Id) return;
+    setPendingPreviewProjectId(project_Id);
+    setPendingPreviewTarget(target);
+    setExecutionModeModalOpen(true);
   };
 
   const stopPreview = async (project_Id: string) => {
@@ -139,6 +200,7 @@ export function DashboardLayout() {
     if (data.ok) {
       setPreviewUrl("");
       setPreviewOpen(false);
+      setActivePreviewProjectId(null);
     }
   };
 
@@ -183,7 +245,7 @@ export function DashboardLayout() {
     setPreviewOpen(true);
     setCodeOpen(true);
   };
-  const handlePreviewToggle = async () => {
+  const handlePreviewToggle = () => {
     if (splitOpen) setSplitOpen(false);
 
     // If preview panel is closed → open it
@@ -191,8 +253,8 @@ export function DashboardLayout() {
       setPreviewOpen(true);
 
       // Start preview ONLY if not running
-      if (!previewUrl && singleProjectId) {
-        await startPreview(singleProjectId);
+      if (!previewUrl && singleProjectId && activePreviewProjectId !== singleProjectId) {
+        requestPreviewStart(singleProjectId, "preview");
       }
     } else {
       // Just close the panel (do NOT stop server)
@@ -210,14 +272,14 @@ export function DashboardLayout() {
     setCodeOpen(false);
   };
 
-  const handleSplitToggle = async () => {
+  const handleSplitToggle = () => {
     if (!splitOpen) {
       setSplitOpen(true);
       setPreviewOpen(true);
       setCodeOpen(true);
 
-      if (!previewUrl && singleProjectId) {
-        await startPreview(singleProjectId);
+      if (!previewUrl && singleProjectId && activePreviewProjectId !== singleProjectId) {
+        requestPreviewStart(singleProjectId, "split");
       }
     } else {
       closeSplitMode();
@@ -340,6 +402,18 @@ export function DashboardLayout() {
             )}
           </ResizablePanelGroup>
         </div>
+
+        <ExecutionModeModal
+          isOpen={executionModeModalOpen}
+          selectedMode={selectedExecutionMode}
+          isSubmitting={isStartingPreview}
+          onClose={closeExecutionModeModal}
+          onSelect={setSelectedExecutionMode}
+          onConfirm={(mode) => {
+            if (!pendingPreviewProjectId || !pendingPreviewTarget) return;
+            void startPreview(pendingPreviewProjectId, mode, pendingPreviewTarget);
+          }}
+        />
 
         {/* Settings Panel */}
         <SettingsPanel

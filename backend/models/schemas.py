@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional
+from typing import List, Literal, Optional
 
 
 class Signup(BaseModel):
@@ -50,3 +50,18 @@ class GeneratePayload(BaseModel):
     user_id: str
     project_name: str
     description: Optional[str] = None
+
+
+class PreviewStartPayload(BaseModel):
+    """
+    Payload for starting project preview execution.
+    Defaults to local mode when omitted for backwards compatibility.
+    """
+    mode: Optional[Literal["local", "docker"]] = None
+
+
+class AssetGenerationPayload(BaseModel):
+    description: Optional[str] = None
+    force: bool = False
+    include_uml: Optional[bool] = None
+    diagram_types: Optional[List[str]] = None

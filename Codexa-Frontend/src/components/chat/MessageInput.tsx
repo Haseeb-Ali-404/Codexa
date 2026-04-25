@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, type ComponentType } from "react";
 import { cn } from "@/lib/utils";
 import {
   Plus,
@@ -19,12 +19,22 @@ export type ChatAttachmentPayload = {
   base64: string;
 };
 
+export type MessageInputMenuAction = {
+  id: string;
+  label: string;
+  description: string;
+  icon?: ComponentType<{ className?: string }>;
+  onSelect: () => void;
+  disabled?: boolean;
+};
+
 interface MessageInputProps {
   onSend: (message: string, attachments?: ChatAttachmentPayload[]) => void;
   isLoading?: boolean;
   /** Assistant is responding (streaming or pipeline) — show Stop instead of Send */
   isGenerating?: boolean;
   onStopGeneration?: () => void;
+  extraActions?: MessageInputMenuAction[];
 }
 
 const MAX_FILES = 8;
@@ -99,6 +109,7 @@ export function MessageInput({
   isLoading = false,
   isGenerating = false,
   onStopGeneration,
+  extraActions = [],
 }: MessageInputProps) {
   const [message, setMessage] = useState("");
   const [isFocused, setIsFocused] = useState(false);
@@ -618,6 +629,49 @@ export function MessageInput({
                         </span>
                       </span>
                     </button>
+                    {extraActions.length > 0 && (
+                      <>
+                        <div className="mx-3 h-px bg-border/60" />
+                        <p className="px-3 pb-1 pt-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                          Project tools
+                        </p>
+                        {extraActions.map((action, index) => {
+                          const Icon = action.icon;
+                          return (
+                            <button
+                              key={action.id}
+                              type="button"
+                              onClick={() => {
+                                setAttachOpen(false);
+                                action.onSelect();
+                              }}
+                              disabled={action.disabled}
+                              className={cn(
+                                "flex w-full items-center gap-3 px-3 py-2.5 text-sm transition-colors",
+                                index > 0 && "border-t border-border/50",
+                                action.disabled
+                                  ? "cursor-not-allowed opacity-45"
+                                  : "hover:bg-secondary/80",
+                              )}
+                            >
+                              {Icon ? (
+                                <Icon className="h-4 w-4 shrink-0 text-primary" />
+                              ) : (
+                                <Plus className="h-4 w-4 shrink-0 text-primary" />
+                              )}
+                              <span className="text-left">
+                                <span className="block font-medium">
+                                  {action.label}
+                                </span>
+                                <span className="text-[11px] text-muted-foreground">
+                                  {action.description}
+                                </span>
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </>
+                    )}
                   </div>
                 </>
               )}

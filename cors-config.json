@@ -1,0 +1,8 @@
+[
+  {
+    "origin": ["https://docs.google.com"],
+    "method": ["GET", "HEAD", "OPTIONS"],
+    "responseHeader": ["Content-Type", "Access-Control-Allow-Origin"],
+    "maxAgeSeconds": 3600
+  }
+]
