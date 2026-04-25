@@ -130,13 +130,31 @@ class ChatAgent:
         ):
             yield piece
 
+    async def generate_structured_payload(
+        self,
+        project_id: str,
+        user_message: str,
+        project_context: str | None = None,
+    ):
+        return await self._inner.generate_structured_payload(
+            project_id,
+            user_message,
+            project_context=project_context,
+        )
+
+    def payload_to_stream_text(self, payload: dict) -> str:
+        return self._inner.payload_to_stream_text(payload)
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
 
 class ClassifierAgent:
     def __init__(self, **kwargs):
         self._inner = _make_agent("classifier", **kwargs)
 
-    def classify(self, message: str):
-        return self._inner.classify(message)
+    def classify(self, message: str, **kwargs):
+        return self._inner.classify(message, **kwargs)
 
     def classify_for_project(self, message: str, project_id: str | None, **kwargs):
         return self._inner.classify_for_project(message, project_id, **kwargs)

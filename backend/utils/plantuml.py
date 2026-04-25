@@ -1,4 +1,5 @@
 import logging
+import re
 import subprocess
 import textwrap
 import zlib
@@ -25,6 +26,17 @@ _PLANTUML_STYLE = "\n".join(
         "skinparam ArrowColor #1e293b",
     ]
 )
+
+_UNICODE_REPLACEMENTS = {
+    "\u2018": "'",
+    "\u2019": "'",
+    "\u201c": '"',
+    "\u201d": '"',
+    "\u2013": "-",
+    "\u2014": "-",
+    "\u2022": "-",
+    "\u00a0": " ",
+}
 
 
 def _encode6bit(value: int) -> str:
@@ -68,8 +80,135 @@ def encode_plantuml_text(text: str) -> str:
     return "".join(encoded_parts)
 
 
+def _strip_markdown_fences(text: str) -> str:
+    value = (text or "").strip()
+    if not value.startswith("```"):
+        return value
+    lines = value.splitlines()
+    if len(lines) <= 1:
+        return value.strip("`")
+    end = len(lines)
+    for index in range(len(lines) - 1, 0, -1):
+        if lines[index].strip() == "```":
+            end = index
+            break
+    return "\n".join(lines[1:end]).strip()
+
+
+def _normalize_plantuml_text(text: str) -> str:
+    value = _strip_markdown_fences(text)
+    for source, target in _UNICODE_REPLACEMENTS.items():
+        value = value.replace(source, target)
+    value = value.replace("\r\n", "\n").replace("\r", "\n")
+    return value.strip()
+
+
+def _safe_diagram_title(title: str | None) -> str:
+    raw = " ".join(str(title or "Diagram").split()).strip()
+    if not raw:
+        raw = "Diagram"
+    safe = re.sub(r"[^A-Za-z0-9 _:\-./()]+", "", raw)
+    return safe[:80].strip() or "Diagram"
+
+
+def _minimal_fallback_plantuml(diagram_type: str | None, title: str | None = None) -> str:
+    heading = _safe_diagram_title(title or (diagram_type or "diagram").replace("_", " ").title())
+    kind = (diagram_type or "diagram").strip().lower().replace("-", "_")
+
+    diagrams = {
+        "use_case": "\n".join(
+            [
+                "@startuml",
+                f"title {heading}",
+                "left to right direction",
+                "actor User",
+                'usecase "Manage workspace files" as UC1',
+                'usecase "Review file details" as UC2',
+                "User --> UC1",
+                "User --> UC2",
+                "@enduml",
+            ]
+        ),
+        "class": "\n".join(
+            [
+                "@startuml",
+                f"title {heading}",
+                "class User {",
+                "  +id: string",
+                "  +email: string",
+                "}",
+                "class FileRecord {",
+                "  +id: string",
+                "  +name: string",
+                "  +type: string",
+                "}",
+                'User "1" --> "*" FileRecord : owns',
+                "@enduml",
+            ]
+        ),
+        "sequence": "\n".join(
+            [
+                "@startuml",
+                f"title {heading}",
+                "actor User",
+                "participant Frontend",
+                "participant API",
+                "database Storage",
+                "User -> Frontend: Open workspace",
+                "Frontend -> API: Fetch file list",
+                "API -> Storage: Load records",
+                "Storage --> API: File records",
+                "API --> Frontend: Nested file payload",
+                "Frontend --> User: Render safe list",
+                "@enduml",
+            ]
+        ),
+        "component": "\n".join(
+            [
+                "@startuml",
+                f"title {heading}",
+                "[Frontend App] --> [Auth API]",
+                "[Frontend App] --> [Files API]",
+                "[Auth API] --> [User Store]",
+                "[Files API] --> [File Store]",
+                "@enduml",
+            ]
+        ),
+        "deployment": "\n".join(
+            [
+                "@startuml",
+                f"title {heading}",
+                'node "Browser" as browser {',
+                '  component "Frontend App" as frontend',
+                "}",
+                'node "Application Server" as server {',
+                '  component "FastAPI Backend" as backend',
+                "}",
+                'database "MongoDB" as db',
+                "browser --> server",
+                "server --> db",
+                "@enduml",
+            ]
+        ),
+        "activity": "\n".join(
+            [
+                "@startuml",
+                f"title {heading}",
+                "start",
+                ":Receive request;",
+                ":Validate input;",
+                ":Process workspace data;",
+                ":Return response;",
+                "stop",
+                "@enduml",
+            ]
+        ),
+    }
+    return diagrams.get(kind, diagrams["component"])
+
+
 def ensure_wrapped_plantuml(code: str, diagram_type: str | None = None) -> str:
-    body = (code or "").strip()
+    body = _normalize_plantuml_text(code)
     if not body:
         label = (diagram_type or "diagram").replace("_", " ").title()
         body = f"title {label}\n\nNo diagram content provided."
@@ -78,10 +217,31 @@ def ensure_wrapped_plantuml(code: str, diagram_type: str | None = None) -> str:
         [line for line in body.splitlines() if not line.strip().startswith("skinparam")]
     )
 
-    if "@startuml" not in body_without_skinparams:
+    body_without_skinparams = re.sub(
+        r"^\s*@startuml[^\n]*\n?",
+        "",
+        body_without_skinparams,
+        count=1,
+        flags=re.IGNORECASE,
+    )
+    body_without_skinparams = re.sub(
+        r"\n?\s*@enduml\s*$",
+        "",
+        body_without_skinparams,
+        count=1,
+        flags=re.IGNORECASE,
+    ).strip()
+
+    if "@startuml" not in body_without_skinparams.lower():
         body_without_skinparams = f"@startuml\n{body_without_skinparams}\n@enduml"
 
-    final_body = body_without_skinparams.replace("@startuml", f"@startuml\n{_PLANTUML_STYLE}", 1)
+    final_body = re.sub(
+        r"@startuml\b",
+        f"@startuml\n{_PLANTUML_STYLE}",
+        body_without_skinparams,
+        count=1,
+        flags=re.IGNORECASE,
+    )
 
     return final_body
 
@@ -95,7 +255,15 @@ def render_plantuml_png(
     if local_jar and local_jar.exists():
         try:
             logger.info(f"Attempting to render PlantUML locally using {local_jar}")
-            command = ["java", "-Djava.awt.headless=true", "-jar", str(local_jar), "-pipe"]
+            command = [
+                "java",
+                "-Djava.awt.headless=true",
+                "-jar",
+                str(local_jar),
+                "-charset",
+                "UTF-8",
+                "-pipe",
+            ]
             result = subprocess.run(
                 command,
                 input=final_code.encode("utf-8"),
@@ -167,14 +335,43 @@ def render_plantuml_png_file(
     server_url: str | None = None,
     timeout: int = 30,
     title: str | None = None,
+    retries: int = 2,
 ) -> Path:
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        image_data = render_plantuml_png(code, server_url=server_url, timeout=timeout, local_jar=LOCAL_PLANTUML_JAR)
-        path.write_bytes(image_data)
-        logger.info(f"Successfully rendered PlantUML diagram to {path}")
-    except Exception as e:
-        logger.error(f"All rendering methods failed for PlantUML: {e}")
-        _render_fallback_diagram_image(code, path, title=title)
+    attempts = max(0, retries) + 1
+    last_error: Exception | None = None
+    diagram_type = path.stem.strip().lower()
+
+    candidate_sources: list[tuple[str, str]] = [("original", code)]
+    normalized_source = _normalize_plantuml_text(code)
+    if normalized_source and normalized_source != (code or "").strip():
+        candidate_sources.append(("normalized", normalized_source))
+    candidate_sources.append(
+        ("fallback", _minimal_fallback_plantuml(diagram_type, title=title or diagram_type.replace("_", " ").title()))
+    )
+
+    for attempt, (_, candidate_code) in enumerate(candidate_sources[:attempts], start=1):
+        try:
+            image_data = render_plantuml_png(
+                candidate_code,
+                server_url=server_url,
+                timeout=timeout,
+                local_jar=LOCAL_PLANTUML_JAR,
+            )
+            path.write_bytes(image_data)
+            logger.info(f"Successfully rendered PlantUML diagram to {path}")
+            return path
+        except Exception as e:
+            last_error = e
+            logger.warning(
+                "PlantUML render attempt %s/%s failed for %s: %s",
+                attempt,
+                attempts,
+                path,
+                e,
+            )
+
+    logger.error(f"All rendering methods failed for PlantUML after {attempts} attempt(s): {last_error}")
+    _render_fallback_diagram_image(code, path, title=title)
     return path

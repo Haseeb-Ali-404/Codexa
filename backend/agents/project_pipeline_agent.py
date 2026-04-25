@@ -2,14 +2,18 @@ import asyncio
 import json
 import re
 from concurrent.futures import ThreadPoolExecutor
+from typing import Any
 
 from utils.database_models_util import save_message
 from utils.file_utils import flatten_structure
+from utils.json_parser import parse_json_block
 from agents.developer_agent import DeveloperAgent
 from agents.planner_agent import PlannerAgent
 from agents.debugger_agent import DebuggerAgent
 from agents.architecture_agent import ArchitectAgent
 from core.agents.planner_agent import FALLBACK_PLAN, run_planner_pipeline_core
+from core.factory.agent_factory import build_llm_client_for_agent
+from core.providers.base import ChatMessage as LLMChatMessage
 from core.validation.dependency_injector import fix_flat_files
 from core.agents.integrator_agent import IntegratorAgent
 
@@ -24,6 +28,36 @@ _DEVELOPER_ASSEMBLING_RE = re.compile(r"^Assembling\s+(?P<count>\d+)\s+files\.\.
 _DEVELOPER_PROGRESS_RE = re.compile(
     r"^\u2713(?:\s+[^\u2013\u2014-]+)?\s*[\u2013\u2014-]\s*(?P<done>\d+)/(?P<total>\d+)\s+total$"
 )
+_HTML_DOCUMENT_RE = re.compile(r"<!doctype html>.*?</html>", re.IGNORECASE | re.DOTALL)
+_HTML_CODE_FENCE_RE = re.compile(r"```(?:html)?\s*(.*?)```", re.IGNORECASE | re.DOTALL)
+
+_SMALL_PROJECT_PROMPT = """
+You generate complete small web apps for CODEXA.
+
+Return STRICT JSON only in this format:
+{
+  "type": "small_project",
+  "files": [
+    {
+      "filename": "index.html",
+      "content": "FULL HTML CODE"
+    }
+  ]
+}
+
+Hard requirements:
+- Single HTML file only.
+- The HTML must include inline <style> and inline <script>.
+- No external dependencies, CDN links, imports, or asset URLs.
+- Fully working logic. No placeholders. No TODOs.
+- The file content must be raw HTML text, never a nested JSON string.
+- Responsive premium glassmorphism design with gradients, blur, soft shadows, rounded corners, smooth transitions, and clean typography.
+- Make the design feel polished and intentional, not generic: use a strong visual hierarchy, expressive spacing, tasteful motion, hover/focus states, and a cohesive color system.
+- Build complete interactions for the requested app, including empty states, keyboard-safe controls where relevant, and realistic UX details that make the app feel demo-ready.
+- Prefer visually rich layouts, clear headings, and refined micro-interactions over bare utility output.
+- If the user also asks for explanation, ignore the explanation request and generate only the app.
+- Output must be production-ready and directly runnable in a browser.
+"""
 
 
 def _apply_flat_to_structure(structure: list, flat_map: dict, base_path: str = "") -> None:
@@ -421,7 +455,274 @@ class _DeveloperProgressTracker:
             self.state["isParallel"] = extra["is_parallel"]
 
 
+def _derive_small_project_title(user_message: str) -> str:
+    cleaned = " ".join((user_message or "").strip().split())
+    if not cleaned:
+        return "Small Project"
+
+    trimmed = re.sub(
+        r"^(please\s+)?(build|create|make|generate|design|develop|code|recreate|rebuild|regenerate|remake|redo)\s+",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    ).strip()
+    trimmed = re.sub(r"\b(please|again)\b", "", trimmed, flags=re.IGNORECASE)
+    trimmed = " ".join(trimmed.split())
+    trimmed = trimmed[:60].strip(" .:-")
+    if not trimmed:
+        trimmed = cleaned[:60].strip(" .:-")
+
+    words = [part for part in re.split(r"\s+", trimmed) if part]
+    titled = " ".join(word.capitalize() for word in words[:6])
+    return titled or "Small Project"
+
+
+def _extract_html_document(raw: str) -> str | None:
+    text = (raw or "").strip()
+    if not text:
+        return None
+
+    match = _HTML_DOCUMENT_RE.search(text)
+    if match:
+        return match.group(0).strip()
+
+    for fence in _HTML_CODE_FENCE_RE.finditer(text):
+        content = (fence.group(1) or "").strip()
+        if "<html" in content.lower() or "<body" in content.lower():
+            return content
+
+    if "<html" in text.lower() or "<body" in text.lower():
+        return text
+
+    return None
+
+
+def _ensure_inline_small_project_html(html: str, title: str) -> str:
+    content = (html or "").strip()
+    if not content:
+        content = (
+            "<!doctype html>\n"
+            "<html lang=\"en\">\n"
+            "  <head>\n"
+            "    <meta charset=\"UTF-8\" />\n"
+            "    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n"
+            f"    <title>{title}</title>\n"
+            "    <style>\n"
+            "      body { margin: 0; font-family: Arial, sans-serif; background: #0f172a; color: #f8fafc; }\n"
+            "    </style>\n"
+            "  </head>\n"
+            "  <body>\n"
+            "    <main>Small project</main>\n"
+            "    <script>\n"
+            "      console.log('Small project ready');\n"
+            "    </script>\n"
+            "  </body>\n"
+            "</html>"
+        )
+
+    lowered = content.lower()
+    if "<!doctype" not in lowered:
+        content = "<!doctype html>\n" + content
+        lowered = content.lower()
+    if "<html" not in lowered:
+        content = (
+            "<!doctype html>\n"
+            "<html lang=\"en\">\n"
+            "  <head>\n"
+            "    <meta charset=\"UTF-8\" />\n"
+            "    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n"
+            f"    <title>{title}</title>\n"
+            "  </head>\n"
+            f"  <body>\n{content}\n  </body>\n"
+            "</html>"
+        )
+        lowered = content.lower()
+    if "<title>" not in lowered:
+        content = content.replace(
+            "<head>",
+            f"<head>\n    <title>{title}</title>",
+            1,
+        )
+        lowered = content.lower()
+    if "<style" not in lowered:
+        content = content.replace(
+            "</head>",
+            "  <style>\n"
+            "    :root { color-scheme: dark; }\n"
+            "    body { margin: 0; min-height: 100vh; background: linear-gradient(135deg, #0f172a, #111827 45%, #1e293b); }\n"
+            "  </style>\n"
+            "</head>",
+            1,
+        )
+        lowered = content.lower()
+    if "<script" not in lowered:
+        content = content.replace(
+            "</body>",
+            "  <script>\n"
+            "    console.log('Small project ready');\n"
+            "  </script>\n"
+            "</body>",
+            1,
+        )
+    return content.strip()
+
+
+def _extract_nested_small_project_html(value: Any) -> str | None:
+    current: Any = value
+    for _ in range(5):
+        if isinstance(current, str):
+            text = current.strip()
+            if not text:
+                return None
+            html = _extract_html_document(text)
+            if html:
+                return html
+            parsed = parse_json_block(text, default=None)
+            if parsed is None:
+                try:
+                    parsed = json.loads(text)
+                except Exception:
+                    return None
+            current = parsed
+            continue
+
+        if isinstance(current, dict):
+            current_type = str(current.get("type") or "").strip().lower()
+            if current_type == "small_project":
+                files = current.get("files")
+                if isinstance(files, list):
+                    for item in files:
+                        if isinstance(item, dict) and str(item.get("content") or "").strip():
+                            current = item.get("content")
+                            break
+                    else:
+                        return None
+                    continue
+
+            if current_type == "conversation":
+                content_blocks = current.get("content")
+                if isinstance(content_blocks, list):
+                    for block in content_blocks:
+                        if not isinstance(block, dict):
+                            continue
+                        nested_html = _extract_nested_small_project_html(
+                            block.get("content")
+                        ) or _extract_nested_small_project_html(block.get("value"))
+                        if nested_html:
+                            return nested_html
+                return None
+
+            if str(current.get("content") or "").strip():
+                current = current.get("content")
+                continue
+
+        return None
+
+    return None
+
+
+def _coerce_small_project_content(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (dict, list)):
+        try:
+            return json.dumps(value, ensure_ascii=False)
+        except Exception:
+            return str(value)
+    return str(value or "")
+
+
+class _SmallProjectGenerator:
+    def __init__(self) -> None:
+        self._llm, self._opts = build_llm_client_for_agent("developer")
+
+    def _normalize_payload(self, raw: str, *, title: str) -> dict[str, Any]:
+        parsed = parse_json_block(raw, default=None)
+        if isinstance(parsed, dict) and str(parsed.get("type") or "").strip().lower() == "small_project":
+            files = parsed.get("files")
+            if isinstance(files, list):
+                normalized_files: list[dict[str, str]] = []
+                for item in files:
+                    if not isinstance(item, dict):
+                        continue
+                    filename = str(item.get("filename") or "").strip() or "index.html"
+                    raw_content = _coerce_small_project_content(item.get("content"))
+                    content = _extract_nested_small_project_html(raw_content) or raw_content
+                    if content.strip():
+                        normalized_files.append(
+                            {
+                                "filename": "index.html" if filename.lower().endswith(".html") else "index.html",
+                                "content": _ensure_inline_small_project_html(content, title),
+                            }
+                        )
+                if normalized_files:
+                    return {"type": "small_project", "files": normalized_files[:1]}
+
+        recovered_html = _extract_nested_small_project_html(parsed if parsed is not None else raw)
+        if recovered_html:
+            return {
+                "type": "small_project",
+                "files": [
+                    {
+                        "filename": "index.html",
+                        "content": _ensure_inline_small_project_html(recovered_html, title),
+                    }
+                ],
+            }
+
+        html = _extract_html_document(raw)
+        if html:
+            return {
+                "type": "small_project",
+                "files": [
+                    {
+                        "filename": "index.html",
+                        "content": _ensure_inline_small_project_html(html, title),
+                    }
+                ],
+            }
+
+        raise RuntimeError("Small project generator did not return a valid HTML app.")
+
+    def generate(self, user_message: str) -> dict[str, Any]:
+        title = _derive_small_project_title(user_message)
+        messages = [
+            LLMChatMessage(role="system", content=_SMALL_PROJECT_PROMPT),
+            LLMChatMessage(
+                role="user",
+                content=f"User request:\n{user_message}\n\nGenerate the app now.",
+            ),
+        ]
+        result = self._llm.complete(messages, self._opts)
+        payload = self._normalize_payload((result.text or "").strip(), title=title)
+        html = payload["files"][0]["content"]
+        return {
+            "type": "small_project",
+            "title": title,
+            "payload": payload,
+            "project": {
+                "structure": [
+                    {
+                        "type": "folder",
+                        "name": "frontend",
+                        "children": [
+                            {
+                                "type": "file",
+                                "name": "index.html",
+                                "content": html,
+                            }
+                        ],
+                    }
+                ]
+            },
+        }
+
+
 class ProjectPipeline:
+    def run_small_project(self, chat_id: str, user_message: str) -> dict[str, Any]:
+        generator = _SmallProjectGenerator()
+        return generator.generate(user_message)
+
     def run(self, chat_id: str, user_message: str):
         """Synchronous full pipeline (HTTP /chat)."""
         planner = PlannerAgent()

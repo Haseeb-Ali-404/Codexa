@@ -4,6 +4,7 @@ import {
   useEffect,
   useLayoutEffect,
   useCallback,
+  useMemo,
 } from "react";
 import { ChatMessage } from "./ChatMessage";
 import type { PlannerPipelineState, StageStatus } from "./PlannerStageMessage";
@@ -14,7 +15,6 @@ import {
   type MessageInputMenuAction,
 } from "./MessageInput";
 import {
-  GeneratedAssetsPanel,
   type UmlDiagramAsset,
 } from "./GeneratedAssetsPanel";
 import type { DebuggerState } from "./ValidatorMessage";
@@ -44,11 +44,22 @@ interface MessageAttachmentView {
   url: string;
 }
 
+interface AssetPanelSnapshot {
+  projectTitle?: string | null;
+  umlDiagrams: UmlDiagramAsset[];
+  pptUrl?: string | null;
+  viewerUrl?: string | null;
+  isGeneratingUml?: boolean;
+  isGeneratingPpt?: boolean;
+}
+
 interface Message {
   id: string;
   role: "user" | "assistant";
   content: string;
   title?: string;
+  projectId?: string | null;
+  projectIdSource?: "persisted" | "live" | null;
   agent?: "developer" | "debugger" | "planner" | "generator" | "validator" | "architect" | "Conversation" | string | null;
   createdAt?: string | number;
   code?: {
@@ -62,17 +73,19 @@ interface Message {
   validationPassed?: boolean | null;
   architectureData?: Record<string, unknown>;
   debuggerState?: DebuggerState;
+  assetPanel?: AssetPanelSnapshot;
 }
 
 interface Props {
   selectedchatId: string | null;
   onCodeGenerated?: (
     code: string,
-    lang: string,
     new_project_id: string,
+    lang: string,
   ) => void;
   /** After AI edits existing project files (diffs available in app context). */
   onCodeEdited?: (projectId: string) => void;
+  onPreviewProject?: (projectId: string) => void;
 }
 
 const suggestions = [
@@ -94,7 +107,11 @@ const suggestions = [
   },
 ];
 
-export function ChatContainer({ onCodeGenerated, onCodeEdited }: Props) {
+export function ChatContainer({
+  onCodeGenerated,
+  onCodeEdited,
+  onPreviewProject,
+}: Props) {
   const { userId } = useAuth();
   const {
     refreshData,
@@ -143,6 +160,12 @@ export function ChatContainer({ onCodeGenerated, onCodeEdited }: Props) {
   /** Smooth quick “typing”: split network chunks into small rAF batches */
   const streamCharQueueRef = useRef<string[]>([]);
   const streamRafRef = useRef<number | null>(null);
+  const pendingStructuredReplyRef = useRef<{
+    payload: unknown;
+    agent: string;
+    targetMessageId: string | null;
+    projectId?: string | null;
+  } | null>(null);
   /** False after conversation_done/error → blocks stale rAF callbacks from opening a new bubble */
   const streamingActiveRef = useRef(false);
   /** When false, new tokens must not yank scroll (user reading earlier messages) */
@@ -184,6 +207,67 @@ export function ChatContainer({ onCodeGenerated, onCodeEdited }: Props) {
     }
     void loadGeneratedAssets(activeProjectId);
   }, [activeProjectId, loadGeneratedAssets]);
+
+  useEffect(() => {
+    setMessages((prev) => {
+      const assetMessageId = activeProjectId ? `assets-${activeProjectId}` : null;
+      let next = prev.filter(
+        (message) => message.agent !== "assets" || message.id === assetMessageId,
+      );
+
+      const hasAssetContent = Boolean(
+        activeProjectId &&
+          (umlDiagrams.length > 0 ||
+            pptUrl ||
+            isGeneratingUml ||
+            isGeneratingPpt),
+      );
+
+      if (!assetMessageId || !hasAssetContent) {
+        return next.filter((message) => message.agent !== "assets");
+      }
+
+      const snapshot: AssetPanelSnapshot = {
+        projectTitle: activeProject?.title ?? null,
+        umlDiagrams,
+        pptUrl,
+        viewerUrl: pptViewerUrl,
+        isGeneratingUml,
+        isGeneratingPpt,
+      };
+
+      const existingIndex = next.findIndex((message) => message.id === assetMessageId);
+      if (existingIndex >= 0) {
+        const existing = next[existingIndex];
+        next[existingIndex] = {
+          ...existing,
+          agent: "assets",
+          assetPanel: snapshot,
+        };
+        return next;
+      }
+
+      return [
+        ...next,
+        {
+          id: assetMessageId,
+          role: "assistant",
+          content: "",
+          agent: "assets",
+          createdAt: new Date().toISOString(),
+          assetPanel: snapshot,
+        },
+      ];
+    });
+  }, [
+    activeProject,
+    activeProjectId,
+    isGeneratingPpt,
+    isGeneratingUml,
+    pptUrl,
+    pptViewerUrl,
+    umlDiagrams,
+  ]);
 
   useEffect(() => {
     registerMessages(
@@ -362,6 +446,61 @@ export function ChatContainer({ onCodeGenerated, onCodeEdited }: Props) {
     return `${date.getDate()}-${date.getMonth() + 1}-${date.getFullYear()}`;
   };
 
+  const smallProjectIdsForChat = userProjects
+    .filter(
+      (project: any) =>
+        project?.chat_id === chatId &&
+        project?.project_type === "small_project" &&
+        typeof project?._id === "string",
+    )
+    .sort((a: any, b: any) => {
+      const left = parseMessageDate(a?.created_at)?.getTime() ?? 0;
+      const right = parseMessageDate(b?.created_at)?.getTime() ?? 0;
+      return left - right;
+    })
+    .map((project: any) => project._id as string);
+
+  const resolvedPreviewProjectIds = useMemo(() => {
+    const reservedIds = new Set(
+      messages
+        .filter(
+          (message) =>
+            isSmallProjectPayloadString(message.content) &&
+            typeof message.projectId === "string" &&
+            Boolean(message.projectId) &&
+            message.projectIdSource !== null &&
+            smallProjectIdsForChat.includes(message.projectId),
+        )
+        .map((message) => message.projectId as string),
+    );
+
+    const fallbackIds = smallProjectIdsForChat.filter(
+      (projectId) => !reservedIds.has(projectId),
+    );
+
+    let fallbackIndex = 0;
+    return messages.map((message) => {
+      if (!isSmallProjectPayloadString(message.content)) {
+        return null;
+      }
+
+      if (
+        typeof message.projectId === "string" &&
+        Boolean(message.projectId) &&
+        message.projectIdSource !== null &&
+        smallProjectIdsForChat.includes(message.projectId)
+      ) {
+        return message.projectId;
+      }
+
+      const fallbackProjectId = fallbackIds[fallbackIndex] ?? null;
+      if (fallbackProjectId) {
+        fallbackIndex += 1;
+      }
+      return fallbackProjectId;
+    });
+  }, [messages, smallProjectIdsForChat]);
+
   const showDateChipFor = (text: string) => {
     if (!text) return;
     setDateIndicator(text);
@@ -454,6 +593,10 @@ export function ChatContainer({ onCodeGenerated, onCodeEdited }: Props) {
               id: msg._id,
               role: msg.role,
               content: msg.content,
+              projectId:
+                typeof msg.project_id === "string" ? msg.project_id : null,
+              projectIdSource:
+                typeof msg.project_id === "string" ? "persisted" : null,
               createdAt:
                 parseMessageDate(
                   msg.created_at ||
@@ -473,7 +616,38 @@ export function ChatContainer({ onCodeGenerated, onCodeEdited }: Props) {
             };
           });
 
-          setMessages(mapped);
+          const deduped = mapped.reduce<Message[]>((acc, message) => {
+            const previous = acc[acc.length - 1];
+            if (!previous) {
+              acc.push(message);
+              return acc;
+            }
+
+            const isCurrentSmallProject = isSmallProjectPayloadString(
+              message.content,
+            );
+            const isPreviousSmallProject = isSmallProjectPayloadString(
+              previous.content,
+            );
+
+            if (
+              message.role === "assistant" &&
+              previous.role === "assistant" &&
+              isCurrentSmallProject &&
+              isPreviousSmallProject &&
+              message.content === previous.content
+            ) {
+              if (!previous.projectId && message.projectId) {
+                acc[acc.length - 1] = message;
+              }
+              return acc;
+            }
+
+            acc.push(message);
+            return acc;
+          }, []);
+
+          setMessages(deduped);
           stickToBottomRef.current = true;
           setShowJumpToBottom(false);
           setChatHistoryLoading(false);
@@ -519,6 +693,225 @@ export function ChatContainer({ onCodeGenerated, onCodeEdited }: Props) {
         createdAt: new Date().toISOString(),
       },
     ]);
+  };
+
+  function looksLikeHtmlDocument(raw: string) {
+    const lowered = raw.trim().toLowerCase();
+    return (
+      lowered.startsWith("<!doctype html") ||
+      lowered.startsWith("<html") ||
+      (lowered.includes("<html") &&
+        lowered.includes("<style") &&
+        lowered.includes("<script"))
+    );
+  }
+
+  function extractSmallProjectHtml(value: unknown): string | null {
+    let current: unknown = value;
+
+    for (let depth = 0; depth < 6; depth += 1) {
+      if (typeof current === "string") {
+        const trimmed = current.trim();
+        if (!trimmed) return null;
+        if (looksLikeHtmlDocument(trimmed)) {
+          return trimmed.replace(/\s+$/, "");
+        }
+        if (
+          !trimmed.startsWith("{") &&
+          !trimmed.startsWith("[") &&
+          !trimmed.startsWith('"')
+        ) {
+          return null;
+        }
+        try {
+          current = JSON.parse(trimmed) as unknown;
+          continue;
+        } catch {
+          return null;
+        }
+      }
+
+      if (Array.isArray(current)) {
+        current = current.find(Boolean) ?? null;
+        continue;
+      }
+
+      if (current && typeof current === "object") {
+        const record = current as Record<string, unknown>;
+        const type =
+          typeof record.type === "string"
+            ? record.type.trim().toLowerCase()
+            : "";
+
+        if (type === "small_project" && Array.isArray(record.files)) {
+          const firstFile = record.files.find(
+            (item): item is Record<string, unknown> =>
+              Boolean(item) && typeof item === "object",
+          );
+          current = firstFile?.content ?? null;
+          continue;
+        }
+
+        if (type === "conversation" && Array.isArray(record.content)) {
+          for (const block of record.content) {
+            if (!block || typeof block !== "object") continue;
+            const nestedRecord = block as Record<string, unknown>;
+            const nestedHtml =
+              extractSmallProjectHtml(nestedRecord.content) ??
+              extractSmallProjectHtml(nestedRecord.value);
+            if (nestedHtml) {
+              return nestedHtml;
+            }
+          }
+          return null;
+        }
+
+        if ("content" in record) {
+          current = record.content;
+          continue;
+        }
+      }
+
+      return null;
+    }
+
+    return null;
+  }
+
+  function normalizeSmallProjectPayload(payload: unknown) {
+    let current: unknown = payload;
+
+    for (let depth = 0; depth < 4; depth += 1) {
+      if (typeof current !== "string") break;
+      const trimmed = current.trim();
+      if (!trimmed) return null;
+      if (looksLikeHtmlDocument(trimmed)) {
+        return {
+          type: "small_project" as const,
+          files: [{ filename: "index.html", content: trimmed.replace(/\s+$/, "") }],
+        };
+      }
+      try {
+        current = JSON.parse(trimmed) as unknown;
+      } catch {
+        break;
+      }
+    }
+
+    if (!current || typeof current !== "object") {
+      return null;
+    }
+
+    const record = current as Record<string, unknown>;
+    const type =
+      typeof record.type === "string" ? record.type.trim().toLowerCase() : "";
+    if (type !== "small_project" || !Array.isArray(record.files)) {
+      return null;
+    }
+
+    const files = record.files
+      .map((item) => {
+        if (!item || typeof item !== "object") return null;
+        const file = item as Record<string, unknown>;
+        const filename =
+          typeof file.filename === "string" && file.filename.trim()
+            ? file.filename.trim()
+            : "index.html";
+        const html = extractSmallProjectHtml(file.content);
+        return html ? { filename, content: html } : null;
+      })
+      .filter(
+        (item): item is { filename: string; content: string } => item !== null,
+      );
+
+    if (!files.length) {
+      return null;
+    }
+
+    return {
+      type: "small_project" as const,
+      files,
+    };
+  }
+
+  function stringifyStructuredPayload(payload: unknown) {
+    const normalizedSmallProject = normalizeSmallProjectPayload(payload);
+    if (
+      normalizedSmallProject &&
+      normalizedSmallProject.files.length === 1 &&
+      normalizedSmallProject.files[0]?.content
+    ) {
+      return normalizedSmallProject.files[0].content;
+    }
+
+    const serializable = normalizedSmallProject ?? payload;
+
+    try {
+      return typeof serializable === "string"
+        ? serializable
+        : JSON.stringify(serializable);
+    } catch {
+      return typeof serializable === "string" ? serializable : "";
+    }
+  }
+
+  function isSmallProjectPayloadString(raw: string) {
+    return normalizeSmallProjectPayload(raw) !== null;
+  }
+
+  const upsertStructuredAssistantMessage = (
+    payload: unknown,
+    agent: string = "chat",
+    targetMessageId: string | null = null,
+    projectId: string | null = null,
+  ) => {
+    const content = stringifyStructuredPayload(payload);
+    if (!content) return;
+
+    setMessages((prev) => {
+      const sid = targetMessageId ?? streamingMessageIdRef.current;
+      if (sid && prev.some((message) => message.id === sid)) {
+        return prev.map((message) =>
+          message.id === sid
+            ? {
+                ...message,
+                content,
+                agent,
+                createdAt: new Date().toISOString(),
+                ...(projectId ? { projectId } : {}),
+                ...(projectId ? { projectIdSource: "live" as const } : {}),
+              }
+            : message,
+        );
+      }
+
+      return [
+        ...prev,
+        {
+          id: `structured-${Date.now()}`,
+          role: "assistant",
+          content,
+          agent,
+          projectId,
+          projectIdSource: projectId ? "live" : null,
+          createdAt: new Date().toISOString(),
+        },
+      ];
+    });
+  };
+
+  const commitPendingStructuredAssistantMessage = (
+    fallbackTargetId: string | null = null,
+  ) => {
+    const pending = pendingStructuredReplyRef.current;
+    if (!pending) return;
+    pendingStructuredReplyRef.current = null;
+    upsertStructuredAssistantMessage(
+      pending.payload,
+      pending.agent,
+      pending.targetMessageId ?? fallbackTargetId,
+      pending.projectId ?? null,
+    );
   };
 
   const appendDeveloperUpdate = (
@@ -614,6 +1007,7 @@ export function ChatContainer({ onCodeGenerated, onCodeEdited }: Props) {
 
     setIsGenerating(true);
     setIsLoading(true);
+    pendingStructuredReplyRef.current = null;
     streamingMessageIdRef.current = null;
     streamCharQueueRef.current = [];
     if (streamRafRef.current !== null) {
@@ -720,7 +1114,7 @@ export function ChatContainer({ onCodeGenerated, onCodeEdited }: Props) {
     const flushStreamQueue = () => {
       streamRafRef.current = null;
       if (!streamingActiveRef.current) return;
-      const charsPerFrame = 2;
+      const charsPerFrame = 5;
       let batch = "";
       for (
         let i = 0;
@@ -771,11 +1165,17 @@ export function ChatContainer({ onCodeGenerated, onCodeEdited }: Props) {
       streamingActiveRef.current = false;
     };
 
+    const finishStreamingSession = () => {
+      const targetMessageId = streamingMessageIdRef.current;
+      clearStreamingRefs();
+      commitPendingStructuredAssistantMessage(targetMessageId);
+    };
+
     /** After server sends conversation_done: never dump the whole queue in one React update */
     const endStreamingSessionAnimated = () => {
       cancelStreamRaf();
       if (streamCharQueueRef.current.length === 0) {
-        clearStreamingRefs();
+        finishStreamingSession();
         return;
       }
       streamingActiveRef.current = true;
@@ -795,7 +1195,7 @@ export function ChatContainer({ onCodeGenerated, onCodeEdited }: Props) {
         if (streamCharQueueRef.current.length) {
           streamRafRef.current = requestAnimationFrame(flushTail);
         } else {
-          clearStreamingRefs();
+          finishStreamingSession();
         }
       };
       streamRafRef.current = requestAnimationFrame(flushTail);
@@ -803,7 +1203,7 @@ export function ChatContainer({ onCodeGenerated, onCodeEdited }: Props) {
 
     const endStreamingSessionImmediate = () => {
       flushQueueInstant();
-      clearStreamingRefs();
+      finishStreamingSession();
     };
 
     ws.onmessage = (event) => {
@@ -824,21 +1224,12 @@ export function ChatContainer({ onCodeGenerated, onCodeEdited }: Props) {
 
       // Streaming conversation (Gemini chunks)
       if (data.type === "conversation_start") {
-        if (!streamingMessageIdRef.current) {
-          setIsLoading(false);
-          const newId = `stream-${Date.now()}`;
-          streamingMessageIdRef.current = newId;
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: newId,
-              role: "assistant",
-              content: "",
-              agent: "Conversation",
-              createdAt: new Date().toISOString(),
-            },
-          ]);
-        }
+        pendingStructuredReplyRef.current = null;
+        setIsLoading(true);
+      }
+
+      if (data.type === "small_project_start") {
+        setIsLoading(true);
       }
 
       if (data.type === "edit_start") {
@@ -882,6 +1273,24 @@ export function ChatContainer({ onCodeGenerated, onCodeEdited }: Props) {
         enqueueStreamText(typeof data.text === "string" ? data.text : "");
       }
 
+      if (data.type === "conversation_structured") {
+        const targetMessageId = streamingMessageIdRef.current;
+        if (
+          streamingActiveRef.current ||
+          streamCharQueueRef.current.length > 0 ||
+          targetMessageId
+        ) {
+          pendingStructuredReplyRef.current = {
+            payload: data.payload,
+            agent: "chat",
+            targetMessageId,
+          };
+        } else {
+          upsertStructuredAssistantMessage(data.payload, "chat");
+        }
+        setIsLoading(false);
+      }
+
       if (data.type === "conversation_done") {
         refreshData();
         endStreamingSessionAnimated();
@@ -910,6 +1319,38 @@ export function ChatContainer({ onCodeGenerated, onCodeEdited }: Props) {
           addMessage("assistant", reply, "Conversation");
         }
         setIsLoading(false);
+      }
+
+      if (data.type === "small_project_done" && data.ok) {
+        endStreamingSessionImmediate();
+        const newProjectId =
+          typeof data.new_project_id === "string" && data.new_project_id
+            ? data.new_project_id
+            : null;
+        upsertStructuredAssistantMessage(
+          data.payload,
+          "chat",
+          null,
+          newProjectId,
+        );
+
+        const payload = normalizeSmallProjectPayload(data.payload);
+        const html =
+          payload?.files?.find((file) => file.filename === "index.html")
+            ?.content ?? "";
+
+        refreshData();
+        const currentChatId = window.location.pathname.split("/c/")[1];
+        if (currentChatId !== data.chat_id) {
+          navigate(`/c/${data.chat_id}`, { replace: true });
+        }
+        if (newProjectId) {
+          onCodeGenerated?.(html, newProjectId, "html");
+        }
+        setIsLoading(false);
+        setIsGenerating(false);
+        wsGenerationActiveRef.current = false;
+        ws.close();
       }
 
       console.log("WS EVENT:", data);
@@ -1515,6 +1956,10 @@ export function ChatContainer({ onCodeGenerated, onCodeEdited }: Props) {
           // Chat messages
           <div className="max-w-[900px] mx-auto space-y-5">
             {messages.map((msg, index) => (
+              (() => {
+                const previewProjectId = resolvedPreviewProjectIds[index];
+
+                return (
               <div
                 key={msg.id}
                 data-chat-message-id={msg.id}
@@ -1532,18 +1977,16 @@ export function ChatContainer({ onCodeGenerated, onCodeEdited }: Props) {
                   message={msg}
                   index={index}
                   searchHighlight={debouncedQuery}
+                  onPreviewCode={
+                    previewProjectId && onPreviewProject
+                      ? () => onPreviewProject(previewProjectId)
+                      : undefined
+                  }
                 />
               </div>
+                );
+              })()
             ))}
-
-            <GeneratedAssetsPanel
-              projectTitle={activeProject?.title ?? null}
-              umlDiagrams={umlDiagrams}
-              pptUrl={pptUrl}
-              viewerUrl={pptViewerUrl}
-              isGeneratingUml={isGeneratingUml}
-              isGeneratingPpt={isGeneratingPpt}
-            />
 
             {isLoading && (
               <div className="flex gap-3 animate-fade-in-up">

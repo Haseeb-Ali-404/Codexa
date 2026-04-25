@@ -6,7 +6,6 @@ import { CodePanel } from "./CodePanel";
 import { SplitPanel } from "./SplitPanel";
 import { ChatContainer } from "../chat/ChatContainer";
 import { SettingsPanel } from "../settings/SettingsPanel";
-import { useParams } from "react-router-dom";
 import {
   ResizablePanelGroup,
   ResizablePanel,
@@ -32,8 +31,6 @@ export function DashboardLayout() {
 
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const { projectId } = useParams();
-
   const {
     projectFiles,
     selectedFile,
@@ -42,13 +39,10 @@ export function DashboardLayout() {
     singleProjectId,
     loadProjectfiles,
     refreshData,
+    userProjects,
   } = useAppData();
 
   // ✅ When a project is clicked in sidebar
-  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(
-    null,
-  );
-
   // Panels
   const [previewOpen, setPreviewOpen] = useState(false);
   const [codeOpen, setCodeOpen] = useState(false);
@@ -65,11 +59,9 @@ export function DashboardLayout() {
   const [activePreviewProjectId, setActivePreviewProjectId] = useState<string | null>(null);
   const [isStartingPreview, setIsStartingPreview] = useState(false);
   const activePreviewProjectIdRef = useRef<string | null>(null);
-
-  // Code + HTML preview storage
-  const [generatedCode, setGeneratedCode] = useState("");
-  const [generatedLanguage, setGeneratedLanguage] = useState("html");
-  const [generatedHTML, setGeneratedHTML] = useState("");
+  const selectedProject =
+    userProjects.find((project: any) => project?._id === singleProjectId) ?? null;
+  const isSelectedSmallProject = selectedProject?.project_type === "small_project";
 
   // Theme
   const [isDark, setIsDark] = useState(() => {
@@ -116,10 +108,25 @@ export function DashboardLayout() {
   useEffect(() => {
     if (!singleProjectId || singleProjectId === activePreviewProjectId) return;
 
+    const selectedProject = userProjects.find(
+      (project: any) => project?._id === singleProjectId,
+    );
+    if (!selectedProject) return;
+    if (selectedProject?.project_type === "small_project") {
+      setPreviewOpen(false);
+      setCodeOpen(false);
+      setSplitOpen(false);
+      setPreviewUrl("");
+      setExecutionModeModalOpen(false);
+      setPendingPreviewProjectId(null);
+      setPendingPreviewTarget(null);
+      return;
+    }
+
     setPendingPreviewProjectId(singleProjectId);
     setPendingPreviewTarget("auto");
     setExecutionModeModalOpen(true);
-  }, [activePreviewProjectId, singleProjectId]);
+  }, [activePreviewProjectId, singleProjectId, userProjects]);
 
   useEffect(() => {
     activePreviewProjectIdRef.current = activePreviewProjectId;
@@ -148,21 +155,11 @@ export function DashboardLayout() {
   ) => {
     if (!project_Id) return;
 
-    // Open the panel immediately — the URL arrives via SSE inside PreviewPanel
-    if (target === "split") {
-      setSplitOpen(true);
-      setPreviewOpen(true);
-      setCodeOpen(true);
-    } else {
-      if (target === "preview") setSplitOpen(false);
-      setPreviewOpen(true);
-    }
-
     setPreviewUrl("");
     setIsStartingPreview(true);
 
     try {
-      await fetch(
+      const response = await fetch(
         `http://localhost:8000/preview/start/${project_Id}`,
         {
           method: "POST",
@@ -170,6 +167,24 @@ export function DashboardLayout() {
           body: JSON.stringify({ mode }),
         },
       );
+      if (!response.ok) {
+        throw new Error(`Preview start failed with status ${response.status}`);
+      }
+
+      await loadProjectfiles(project_Id);
+
+      if (target === "split") {
+        setSplitOpen(true);
+        setPreviewOpen(true);
+        setCodeOpen(true);
+      } else {
+        if (target === "preview") {
+          setSplitOpen(false);
+          setCodeOpen(false);
+        }
+        setPreviewOpen(true);
+      }
+
       setActivePreviewProjectId(project_Id);
     } catch (e) {
       console.error("Preview start error:", e);
@@ -183,6 +198,12 @@ export function DashboardLayout() {
 
   const requestPreviewStart = (project_Id: string, target: PreviewLaunchTarget) => {
     if (!project_Id) return;
+    const selectedProject = userProjects.find(
+      (project: any) => project?._id === project_Id,
+    );
+    if (selectedProject?.project_type === "small_project") {
+      return;
+    }
     setPendingPreviewProjectId(project_Id);
     setPendingPreviewTarget(target);
     setExecutionModeModalOpen(true);
@@ -233,19 +254,27 @@ export function DashboardLayout() {
   };
 
   const openProjectInPanels = (
-    code: string,
-    language: string,
-    html: string,
+    _code: string,
+    _language: string,
+    _html: string,
   ) => {
-    setGeneratedCode(code);
-    setGeneratedLanguage(language);
-    setGeneratedHTML(html);
-
+    if (_language === "html") {
+      setSplitOpen(false);
+      setPreviewOpen(false);
+      setCodeOpen(false);
+      return;
+    }
     setSplitOpen(false);
     setPreviewOpen(true);
     setCodeOpen(true);
   };
+
   const handlePreviewToggle = () => {
+    if (isSelectedSmallProject) {
+      setPreviewOpen(false);
+      setSplitOpen(false);
+      return;
+    }
     if (splitOpen) setSplitOpen(false);
 
     // If preview panel is closed → open it
@@ -253,7 +282,11 @@ export function DashboardLayout() {
       setPreviewOpen(true);
 
       // Start preview ONLY if not running
-      if (!previewUrl && singleProjectId && activePreviewProjectId !== singleProjectId) {
+      if (
+        !previewUrl &&
+        singleProjectId &&
+        activePreviewProjectId !== singleProjectId
+      ) {
         requestPreviewStart(singleProjectId, "preview");
       }
     } else {
@@ -262,6 +295,11 @@ export function DashboardLayout() {
     }
   };
   const handleCodeToggle = () => {
+    if (isSelectedSmallProject) {
+      setCodeOpen(false);
+      setSplitOpen(false);
+      return;
+    }
     if (splitOpen) setSplitOpen(false);
     setCodeOpen((prev) => !prev);
   };
@@ -273,12 +311,20 @@ export function DashboardLayout() {
   };
 
   const handleSplitToggle = () => {
+    if (isSelectedSmallProject) {
+      closeSplitMode();
+      return;
+    }
     if (!splitOpen) {
       setSplitOpen(true);
       setPreviewOpen(true);
       setCodeOpen(true);
 
-      if (!previewUrl && singleProjectId && activePreviewProjectId !== singleProjectId) {
+      if (
+        !previewUrl &&
+        singleProjectId &&
+        activePreviewProjectId !== singleProjectId
+      ) {
         requestPreviewStart(singleProjectId, "split");
       }
     } else {
@@ -329,12 +375,18 @@ export function DashboardLayout() {
             <ResizablePanel defaultSize={hasSidePanel ? 60 : 100} minSize={35}>
               <main className="h-full flex flex-col overflow-hidden pt-4">
                 <ChatContainer
-                  selectedchatId={selectedProjectId}
-                  onCodeGenerated={(code, new_project_id) => {
+                  selectedchatId={null}
+                  onCodeGenerated={(_code, new_project_id, lang) => {
                     refreshData();
                     setsingleProjectId(new_project_id);
                     loadProjectfiles(new_project_id);
-                    setGeneratedCode(code);
+                    if (lang === "html") {
+                      setSplitOpen(false);
+                      setCodeOpen(false);
+                      setPreviewOpen(false);
+                      setPreviewUrl("");
+                      return;
+                    }
                     setCodeOpen(true);
                     setPreviewOpen(true);
                   }}
@@ -343,6 +395,31 @@ export function DashboardLayout() {
                     setsingleProjectId(projectId);
                     loadProjectfiles(projectId);
                     setCodeOpen(true);
+                  }}
+                  onPreviewProject={(projectId) => {
+                    const targetProject = userProjects.find(
+                      (project: any) => project?._id === projectId,
+                    );
+                    if (targetProject?.project_type === "small_project") {
+                      setSplitOpen(false);
+                      setCodeOpen(false);
+                      setPreviewOpen(false);
+                      setPreviewUrl("");
+                      return;
+                    }
+                    setsingleProjectId(projectId);
+                    loadProjectfiles(projectId);
+                    setPreviewOpen(true);
+                    setSplitOpen(false);
+                    if (activePreviewProjectId === projectId && previewUrl) {
+                      return;
+                    }
+                    if (activePreviewProjectId === projectId) {
+                      setPreviewUrl("");
+                      requestPreviewStart(projectId, "preview");
+                      return;
+                    }
+                    setPreviewUrl("");
                   }}
                 />
               </main>

@@ -350,10 +350,60 @@ export function PreviewPanel({
     setIframeLoading(true);
     iframeOpenedAt.current = Date.now();
     setTimeout(() => {
-      if (iframeRef.current) iframeRef.current.src = effectiveUrl;
+      if (iframeRef.current) {
+        iframeRef.current.src = effectiveUrl;
+      }
       setIsRefreshing(false);
     }, 350);
   }, [effectiveUrl, isRefreshing]);
+
+  useEffect(() => {
+    if (!isOpen || !projectId) return;
+
+    let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+    let disposed = false;
+
+    const handleRuntimeMessage = (event: MessageEvent) => {
+      const payload = event.data;
+      if (!payload || payload.source !== "codexa-preview-monitor") return;
+      if (payload.kind !== "issues" || !Array.isArray(payload.issues) || payload.issues.length === 0) {
+        return;
+      }
+      if (iframeRef.current?.contentWindow && event.source !== iframeRef.current.contentWindow) {
+        return;
+      }
+
+      void fetch(`${API_BASE}/preview/runtime-report/${projectId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mode: serverState?.execution_mode ?? "local",
+          href: payload.href,
+          issues: payload.issues,
+        }),
+      })
+        .then(async (response) => {
+          if (!response.ok) return null;
+          return response.json();
+        })
+        .then((data) => {
+          if (!data || disposed || !(data.restarting || data.files_fixed > 0)) return;
+          if (refreshTimer) clearTimeout(refreshTimer);
+          setIframeLoading(true);
+          refreshTimer = setTimeout(() => {
+            if (!disposed) handleRefresh();
+          }, 1800);
+        })
+        .catch(() => undefined);
+    };
+
+    window.addEventListener("message", handleRuntimeMessage);
+    return () => {
+      disposed = true;
+      window.removeEventListener("message", handleRuntimeMessage);
+      if (refreshTimer) clearTimeout(refreshTimer);
+    };
+  }, [handleRefresh, isOpen, projectId, serverState?.execution_mode]);
 
   const handleRetry = useCallback(async () => {
     if (!projectId) return;
@@ -422,7 +472,11 @@ export function PreviewPanel({
 
         <div className="flex items-center gap-1">
           <div
-            title={sseConnected ? "Build stream connected" : "Reconnecting..."}
+            title={
+              sseConnected
+                ? "Build stream connected"
+                : "Reconnecting..."
+            }
             className="p-1.5"
           >
             {sseConnected
@@ -690,7 +744,13 @@ export function PreviewPanel({
               isError ? "bg-red-500" : isLoading ? "bg-amber-400 animate-pulse" : isIdle ? "bg-muted-foreground/30" : "bg-emerald-500",
             )} />
             <span>
-              {isError ? "Build failed" : isLoading ? "Building..." : isIdle ? "No project loaded" : "Dev server running"}
+              {isError
+                ? "Build failed"
+                : isLoading
+                  ? "Building..."
+                  : isIdle
+                    ? "No project loaded"
+                    : "Dev server running"}
             </span>
           </div>
 

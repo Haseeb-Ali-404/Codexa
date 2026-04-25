@@ -203,6 +203,8 @@ class DebuggerAgent:
                         errors.append(f"{rel}: deprecated __get_validators__ — use __get_pydantic_core_schema__")
                     if "from passlib.context import CryptContext" in content:
                         errors.append(f"{rel}: uses passlib — replace with direct bcrypt import")
+                    if ".model_validate(" in content and "_normalize_mongo_document(" not in content:
+                        errors.append(f"{rel}: model_validate on DB payload should normalize _id to id")
                 except Exception:
                     pass
 
@@ -293,6 +295,17 @@ class DebuggerAgent:
                     except Exception:
                         pass
 
+            for src_file in list(frontend_path.rglob("*.tsx")) + list(frontend_path.rglob("*.jsx")):
+                if "node_modules" in str(src_file):
+                    continue
+                try:
+                    content = src_file.read_text(encoding="utf-8", errors="replace")
+                    rel = str(src_file.relative_to(frontend_path)).replace("\\", "/")
+                    if self._uses_react_namespace(content) and not self._has_react_namespace_import(content):
+                        errors.append(f"{rel}: uses React namespace without importing React")
+                except Exception:
+                    pass
+
         except Exception as e:
             errors.append(f"Validation error: {str(e)}")
 
@@ -342,10 +355,523 @@ class DebuggerAgent:
             flags=re.DOTALL,
         )
 
+    def _repair_motion_jsx(self, content: str) -> str:
+        """
+        Fix malformed JSX like `<motion key={x}.div>` that can be introduced
+        by model rewrites.
+        """
+        patterns = [
+            (
+                re.compile(
+                    r'<motion\s+key=\{[^}]+\}\.(\w+)((?:\s+[^>]*?)?\s+key=\{[^}]+\}[^>]*)>',
+                    re.DOTALL,
+                ),
+                lambda match: f'<motion.{match.group(1)}{match.group(2)}>',
+            ),
+            (
+                re.compile(r'<motion\s+key=\{([^}]+)\}\.(\w+)(\s*(?:[^>]*?)?)>', re.DOTALL),
+                lambda match: f'<motion.{match.group(2)} key={{{match.group(1)}}}{match.group(3)}>',
+            ),
+            (
+                re.compile(r'</motion\s+key=\{[^}]+\}\.(\w+)\s*>'),
+                lambda match: f'</motion.{match.group(1)}>',
+            ),
+        ]
+        repaired = content
+        for pattern, replacement in patterns:
+            repaired = pattern.sub(replacement, repaired)
+        return repaired
+
+    def _dedupe_jsx_key_attributes(self, content: str) -> str:
+        """
+        Remove duplicate `key` props from a JSX opening tag and keep the last
+        explicit key that survived generation.
+        """
+        def _dedupe_tag(match: re.Match) -> str:
+            tag = match.group(0)
+            key_matches = list(
+                re.finditer(
+                    r'\skey=(\{[^}]+\}|"[^"]*"|\'[^\']*\')',
+                    tag,
+                    flags=re.DOTALL,
+                )
+            )
+            if len(key_matches) <= 1:
+                return tag
+
+            rebuilt: list[str] = []
+            cursor = 0
+            for key_match in key_matches[:-1]:
+                rebuilt.append(tag[cursor:key_match.start()])
+                cursor = key_match.end()
+            rebuilt.append(tag[cursor:])
+            return "".join(rebuilt)
+
+        return re.sub(
+            r'<[A-Za-z][A-Za-z0-9_.:-]*(?:\s[^<>]*?)?>',
+            _dedupe_tag,
+            content,
+            flags=re.DOTALL,
+        )
+
+    def _repair_tailwind_plugin_requires(self, content: str) -> str:
+        """
+        Make Tailwind plugins optional during preview so a missing plugin does
+        not crash PostCSS before the app can load.
+        """
+        plugin_require_pattern = re.compile(
+            r"require\(\s*(['\"])(@tailwindcss/[^'\"]+|tailwindcss-animate)\1\s*\)"
+        )
+        if not plugin_require_pattern.search(content):
+            return content
+
+        repaired = content
+        if "optionalTailwindPlugin" not in repaired:
+            helper = (
+                "const optionalTailwindPlugin = (name) => {\n"
+                "  try {\n"
+                "    return require(name);\n"
+                "  } catch (_error) {\n"
+                "    return null;\n"
+                "  }\n"
+                "};\n\n"
+            )
+            repaired = helper + repaired
+
+        repaired = plugin_require_pattern.sub(
+            lambda match: f"optionalTailwindPlugin('{match.group(2)}')",
+            repaired,
+        )
+
+        plugins_block = re.search(
+            r"(plugins\s*:\s*\[)(.*?)(\])(\s*,?)",
+            repaired,
+            flags=re.DOTALL,
+        )
+        if plugins_block and "optionalTailwindPlugin(" in plugins_block.group(2):
+            block_text = plugins_block.group(0)
+            if ".filter(Boolean)" not in block_text:
+                repaired = (
+                    repaired[:plugins_block.start()]
+                    + f"{plugins_block.group(1)}{plugins_block.group(2)}{plugins_block.group(3)}.filter(Boolean){plugins_block.group(4)}"
+                    + repaired[plugins_block.end():]
+                )
+
+        return repaired
+
+    def _uses_react_namespace(self, content: str) -> bool:
+        return bool(re.search(r"\bReact\.[A-Za-z_$][A-Za-z0-9_$]*", content))
+
+    def _has_react_namespace_import(self, content: str) -> bool:
+        return bool(
+            re.search(
+                r"import\s+(?:\*\s+as\s+)?React(?:\s*,\s*\{[^}]*\})?\s+from\s*['\"]react['\"]",
+                content,
+            )
+        )
+
+    def _ensure_react_namespace_import(self, content: str) -> str:
+        """
+        Add a React namespace import when generated TSX/JSX references `React.*`
+        under the automatic JSX runtime.
+        """
+        if not self._uses_react_namespace(content) or self._has_react_namespace_import(content):
+            return content
+
+        named_import = re.search(
+            r"import\s*\{\s*([^}]+)\s*\}\s*from\s*(['\"])react\2[ \t]*;?",
+            content,
+        )
+        if named_import:
+            quote = named_import.group(2)
+            symbols = " ".join(named_import.group(1).split())
+            replacement = f"import React, {{ {symbols} }} from {quote}react{quote}"
+            return content[:named_import.start()] + replacement + content[named_import.end():]
+
+        type_only_import = re.search(
+            r"import\s+type\s*\{\s*([^}]+)\s*\}\s*from\s*(['\"])react\2[ \t]*;?",
+            content,
+        )
+        if type_only_import:
+            quote = type_only_import.group(2)
+            return f"import React from {quote}react{quote}\n" + content
+
+        return "import React from 'react'\n" + content
+
+    def _ensure_python_helper(self, content: str, helper_source: str, helper_name: str) -> str:
+        if helper_name in content:
+            return content
+
+        import_lines = list(
+            re.finditer(
+                r"^(?:from\s+[^\n]+\s+import\s+[^\n]+|import\s+[^\n]+)\n",
+                content,
+                flags=re.MULTILINE,
+            )
+        )
+        insert_at = import_lines[-1].end() if import_lines else 0
+        prefix = content[:insert_at]
+        suffix = content[insert_at:]
+        glue = "\n\n" if prefix else ""
+        return f"{prefix}{glue}{helper_source}\n{suffix.lstrip()}"
+
+    def _ensure_mongo_document_normalizer(self, content: str) -> str:
+        helper_name = "def _normalize_mongo_document("
+        helper_source = (
+            "def _normalize_mongo_document(document):\n"
+            "    if isinstance(document, dict):\n"
+            "        normalized = dict(document)\n"
+            "        if '_id' in normalized and 'id' not in normalized:\n"
+            "            normalized['id'] = str(normalized.get('_id'))\n"
+            "        return normalized\n"
+            "    return document\n"
+        )
+        return self._ensure_python_helper(content, helper_source, helper_name)
+
+    def _repair_model_validate_mongo_docs(self, content: str) -> str:
+        pattern = re.compile(
+            r"(\b[A-Za-z_][A-Za-z0-9_]*\.model_validate\()"
+            r"(?!_normalize_mongo_document\()"
+            r"([A-Za-z_][A-Za-z0-9_\.]*)"
+            r"(\))"
+        )
+        if not pattern.search(content):
+            return content
+
+        repaired = pattern.sub(
+            r"\1_normalize_mongo_document(\2)\3",
+            content,
+        )
+        if repaired == content:
+            return content
+        return self._ensure_mongo_document_normalizer(repaired)
+
+    def _promote_env_example_files(self, target_dir: Path) -> list[str]:
+        """
+        Convert generated env templates like `.env.example` into real env files
+        when the runtime file is missing.
+        """
+        created: list[str] = []
+        if not target_dir.exists():
+            return created
+
+        for example_file in target_dir.glob(".env*.example"):
+            target_name = example_file.name[: -len(".example")]
+            if not target_name:
+                continue
+            target_file = example_file.with_name(target_name)
+            if target_file.exists():
+                continue
+            try:
+                target_file.write_text(
+                    example_file.read_text(encoding="utf-8", errors="replace"),
+                    encoding="utf-8",
+                )
+                created.append(target_name)
+            except Exception:
+                continue
+        return created
+
+    def _preview_safe_database_template(self) -> str:
+        return """from __future__ import annotations
+
+from types import SimpleNamespace
+from typing import Any
+from uuid import uuid4
+
+try:
+    from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorCollection, AsyncIOMotorDatabase
+except Exception:  # pragma: no cover - fallback for preview resilience
+    AsyncIOMotorClient = Any  # type: ignore[assignment]
+    AsyncIOMotorDatabase = Any  # type: ignore[assignment]
+    AsyncIOMotorCollection = Any  # type: ignore[assignment]
+from app.config import settings
+
+
+class _PreviewMemoryCursor:
+    def __init__(self, documents: list[dict[str, Any]]) -> None:
+        self._documents = list(documents)
+
+    def sort(self, key: Any, direction: int = 1):
+        if isinstance(key, list) and key:
+            key, direction = key[0]
+        if isinstance(key, str):
+            self._documents.sort(key=lambda doc: doc.get(key), reverse=int(direction) < 0)
+        return self
+
+    def skip(self, count: int):
+        self._documents = self._documents[max(0, int(count)) :]
+        return self
+
+    def limit(self, count: int):
+        self._documents = self._documents[: max(0, int(count))]
+        return self
+
+    async def to_list(self, length: int | None = None) -> list[dict[str, Any]]:
+        if length is None or length < 0:
+            return [dict(doc) for doc in self._documents]
+        return [dict(doc) for doc in self._documents[:length]]
+
+    def __aiter__(self):
+        self._iter_index = 0
+        return self
+
+    async def __anext__(self):
+        if self._iter_index >= len(self._documents):
+            raise StopAsyncIteration
+        document = dict(self._documents[self._iter_index])
+        self._iter_index += 1
+        return document
+
+
+class _PreviewMemoryCollection:
+    def __init__(self) -> None:
+        self._documents: list[dict[str, Any]] = []
+
+    def _match_query(self, document: dict[str, Any], query: dict[str, Any] | None) -> bool:
+        if not query:
+            return True
+        for key, value in query.items():
+            if key == "$or" and isinstance(value, list):
+                return any(self._match_query(document, item) for item in value if isinstance(item, dict))
+            if document.get(key) != value:
+                return False
+        return True
+
+    def _apply_update(self, document: dict[str, Any], update: dict[str, Any] | None) -> dict[str, Any]:
+        if not update:
+            return document
+        if any(str(key).startswith("$") for key in update.keys()):
+            for key, value in (update.get("$set") or {}).items():
+                document[key] = value
+            for key, value in (update.get("$inc") or {}).items():
+                current = document.get(key, 0)
+                if isinstance(current, (int, float)) and isinstance(value, (int, float)):
+                    document[key] = current + value
+            for key, value in (update.get("$push") or {}).items():
+                current = document.get(key)
+                if not isinstance(current, list):
+                    current = [] if current is None else [current]
+                current.append(value)
+                document[key] = current
+            return document
+        document.clear()
+        document.update(update)
+        return document
+
+    async def find_one(self, query: dict[str, Any] | None = None) -> dict[str, Any] | None:
+        for document in self._documents:
+            if self._match_query(document, query):
+                return dict(document)
+        return None
+
+    def find(self, query: dict[str, Any] | None = None, *args: Any, **kwargs: Any) -> _PreviewMemoryCursor:
+        matched = [dict(document) for document in self._documents if self._match_query(document, query)]
+        return _PreviewMemoryCursor(matched)
+
+    async def insert_one(self, document: dict[str, Any]) -> SimpleNamespace:
+        stored = dict(document)
+        stored.setdefault("_id", str(uuid4()))
+        self._documents.append(stored)
+        return SimpleNamespace(inserted_id=stored["_id"])
+
+    async def update_one(
+        self,
+        query: dict[str, Any],
+        update: dict[str, Any],
+        upsert: bool = False,
+    ) -> SimpleNamespace:
+        for document in self._documents:
+            if self._match_query(document, query):
+                self._apply_update(document, update)
+                return SimpleNamespace(matched_count=1, modified_count=1, upserted_id=None)
+        if upsert:
+            base_document = dict(query)
+            if "$set" in update:
+                base_document.update(update["$set"])
+            base_document.setdefault("_id", str(uuid4()))
+            self._documents.append(base_document)
+            return SimpleNamespace(matched_count=0, modified_count=0, upserted_id=base_document["_id"])
+        return SimpleNamespace(matched_count=0, modified_count=0, upserted_id=None)
+
+    async def delete_one(self, query: dict[str, Any]) -> SimpleNamespace:
+        for index, document in enumerate(self._documents):
+            if self._match_query(document, query):
+                del self._documents[index]
+                return SimpleNamespace(deleted_count=1)
+        return SimpleNamespace(deleted_count=0)
+
+    async def count_documents(self, query: dict[str, Any] | None = None) -> int:
+        return sum(1 for document in self._documents if self._match_query(document, query))
+
+    async def find_one_and_update(
+        self,
+        query: dict[str, Any],
+        update: dict[str, Any],
+        upsert: bool = False,
+        return_document: Any = None,
+    ) -> dict[str, Any] | None:
+        for document in self._documents:
+            if self._match_query(document, query):
+                self._apply_update(document, update)
+                return dict(document)
+        if upsert:
+            created = dict(query)
+            if "$set" in update:
+                created.update(update["$set"])
+            created.setdefault("_id", str(uuid4()))
+            self._documents.append(created)
+            return dict(created)
+        return None
+
+    async def find_one_and_delete(self, query: dict[str, Any]) -> dict[str, Any] | None:
+        for index, document in enumerate(self._documents):
+            if self._match_query(document, query):
+                removed = self._documents.pop(index)
+                return dict(removed)
+        return None
+
+
+class _PreviewMemoryDatabase:
+    def __init__(self) -> None:
+        self._collections: dict[str, _PreviewMemoryCollection] = {}
+
+    def __getitem__(self, name: str) -> _PreviewMemoryCollection:
+        if name not in self._collections:
+            self._collections[name] = _PreviewMemoryCollection()
+        return self._collections[name]
+
+    def __getattr__(self, name: str) -> _PreviewMemoryCollection:
+        return self[name]
+
+
+class _DatabaseProxy:
+    def __init__(self) -> None:
+        self._target: Any = None
+
+    def set_target(self, target: Any) -> None:
+        self._target = target
+
+    def get_target(self) -> Any:
+        global _preview_memory_db
+        if self._target is None:
+            if _preview_memory_db is None:
+                _preview_memory_db = _PreviewMemoryDatabase()
+            self._target = _preview_memory_db
+        return self._target
+
+    def __getitem__(self, key: str) -> Any:
+        return self.get_target()[key]
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.get_target(), name)
+
+
+_client: AsyncIOMotorClient | None = None
+client: AsyncIOMotorClient | None = None
+_preview_memory_db: _PreviewMemoryDatabase | None = None
+db = _DatabaseProxy()
+
+
+def _database_name() -> str:
+    return (
+        getattr(settings, "DATABASE_NAME", None)
+        or getattr(settings, "DB_NAME", None)
+        or "app_db"
+    )
+
+
+def _mongo_url() -> str:
+    return (
+        getattr(settings, "MONGO_URL", None)
+        or getattr(settings, "MONGODB_URL", None)
+        or "mongodb://localhost:27017"
+    )
+
+
+async def connect_db() -> None:
+    global _client, client, _preview_memory_db
+    try:
+        _client = AsyncIOMotorClient(_mongo_url(), serverSelectionTimeoutMS=3000)
+        await _client.server_info()
+        client = _client
+        _preview_memory_db = None
+        db.set_target(_client[_database_name()])
+    except Exception as _e:
+        _client = None
+        client = None
+        if _preview_memory_db is None:
+            _preview_memory_db = _PreviewMemoryDatabase()
+        db.set_target(_preview_memory_db)
+        print(f"[DB] MongoDB unavailable - using in-memory preview database: {_e}")
+
+
+async def disconnect_db() -> None:
+    global _client, client, _preview_memory_db
+    if _client is not None:
+        _client.close()
+    _client = None
+    client = None
+    if _preview_memory_db is None:
+        _preview_memory_db = _PreviewMemoryDatabase()
+    db.set_target(_preview_memory_db)
+
+
+async def close_db() -> None:
+    await disconnect_db()
+
+
+def get_database():
+    if _client is not None:
+        db.set_target(_client[_database_name()])
+        return db.get_target()
+    return db.get_target()
+
+
+def get_db():
+    return get_database()
+"""
+
+    def _repair_database_unavailable_backend(self, backend_path: Path) -> list[str]:
+        changed_files: list[str] = []
+        template = self._preview_safe_database_template()
+        for database_file in backend_path.rglob("database.py"):
+            if not database_file.is_file():
+                continue
+            try:
+                original = database_file.read_text(encoding="utf-8", errors="replace")
+            except Exception:
+                continue
+            if (
+                "AsyncIOMotorClient" not in original
+                and "get_database" not in original
+                and "get_db" not in original
+            ):
+                continue
+            if original == template:
+                continue
+            try:
+                database_file.write_text(template, encoding="utf-8")
+                changed_files.append(str(database_file.relative_to(backend_path)).replace("\\", "/"))
+                self._report(
+                    f"Injected preview-safe database fallback into {changed_files[-1]}",
+                    scope="backend",
+                    files_fixed=len(changed_files),
+                )
+            except Exception:
+                continue
+        return changed_files
+
     def auto_fix_backend_file(self, content: str, rel_path: str) -> str:
         """Apply auto-fixes to backend file content."""
         original_content = content
         fixes_count = 0
+
+        if rel_path.endswith(".py") and ".model_validate(" in content:
+            repaired_model_validate = self._repair_model_validate_mongo_docs(content)
+            if repaired_model_validate != content:
+                content = repaired_model_validate
+                fixes_count += 1
         
         # Fix HTTP status code typos
         status_fixes = {
@@ -609,6 +1135,28 @@ class DebuggerAgent:
         if repaired_lucide != content:
             content = repaired_lucide
             fixes_count += 1
+
+        if rel_path.endswith((".tsx", ".jsx")):
+            repaired_motion = self._repair_motion_jsx(content)
+            if repaired_motion != content:
+                content = repaired_motion
+                fixes_count += 1
+
+            deduped_keys = self._dedupe_jsx_key_attributes(content)
+            if deduped_keys != content:
+                content = deduped_keys
+                fixes_count += 1
+
+            repaired_react_namespace = self._ensure_react_namespace_import(content)
+            if repaired_react_namespace != content:
+                content = repaired_react_namespace
+                fixes_count += 1
+
+        if Path(rel_path).name.startswith("tailwind.config."):
+            repaired_tailwind = self._repair_tailwind_plugin_requires(content)
+            if repaired_tailwind != content:
+                content = repaired_tailwind
+                fixes_count += 1
         
         # Fix missing Vite proxy configuration
         if rel_path == "vite.config.ts" and "proxy:" not in content:
@@ -677,11 +1225,6 @@ class DebuggerAgent:
             content = content.replace("extends React.Component", "// TODO: Convert to functional component")
             fixes_count += 1
         
-        # Fix missing React import
-        if rel_path.endswith(".tsx") and "import React" not in content and "jsx" in content.lower():
-            content = "import React from 'react'\n" + content
-            fixes_count += 1
-        
         # Auto-fix unsafe .split() calls that crash when the value is null/undefined.
         # Pattern: someExpr.split(  →  (someExpr ?? "").split(
         # We only target identifiers and property chains (not already-guarded calls).
@@ -732,17 +1275,18 @@ class DebuggerAgent:
             if needed:
                 # Find existing react import
                 react_import = re.search(
-                    r"import\s+(?:React\s*,\s*)?\{([^}]+)\}\s+from\s+'react'",
+                    r"import\s+(?:(React)\s*,\s*)?\{([^}]+)\}\s+from\s+(['\"])react\3",
                     content,
                 )
                 if react_import:
-                    existing = [x.strip() for x in react_import.group(1).split(",")]
+                    has_default_react = bool(react_import.group(1))
+                    existing = [x.strip() for x in react_import.group(2).split(",")]
                     missing_hooks = [h for h in needed if h not in existing]
                     if missing_hooks:
                         new_imports = ", ".join(sorted(set(existing + missing_hooks)))
                         content = content.replace(
                             react_import.group(0),
-                            f"import {{ {new_imports} }} from 'react'",
+                            f"import {'React, ' if has_default_react else ''}{{ {new_imports} }} from {react_import.group(3)}react{react_import.group(3)}",
                         )
                         fixes_count += 1
                 elif "import React from 'react'" in content:
@@ -924,7 +1468,8 @@ class DebuggerAgent:
             "files_processed": 0,
             "files_fixed": 0,
             "errors_fixed": [],
-            "syntax_errors": []
+            "syntax_errors": [],
+            "changed_files": [],
         }
         
         if not backend_path.exists():
@@ -932,6 +1477,19 @@ class DebuggerAgent:
             return fix_summary
 
         self._report("Scanning backend files", scope="backend")
+
+        promoted_envs = self._promote_env_example_files(backend_path)
+        if promoted_envs:
+            fix_summary["files_fixed"] += len(promoted_envs)
+            fix_summary["changed_files"].extend(promoted_envs)
+            for env_name in promoted_envs:
+                fix_summary["errors_fixed"].append(f"Promoted {env_name} from template")
+            self._report(
+                f"Promoted {len(promoted_envs)} backend env file(s) from template",
+                scope="backend",
+                files_fixed=fix_summary["files_fixed"],
+                files_processed=fix_summary["files_processed"],
+            )
         
         # Process all Python files in backend
         for py_file in backend_path.rglob("*.py"):
@@ -955,6 +1513,7 @@ class DebuggerAgent:
                     py_file.write_text(fixed_content, encoding="utf-8")
                     fix_summary["files_fixed"] += 1
                     fix_summary["errors_fixed"].append(f"Fixed {rel_path}")
+                    fix_summary["changed_files"].append(rel_path)
                     self._report(
                         f"Fixed backend file {rel_path}",
                         scope="backend",
@@ -976,6 +1535,7 @@ class DebuggerAgent:
         if router_fixes:
             fix_summary["files_fixed"] += 1
             fix_summary["errors_fixed"].append(f"main.py: registered {router_fixes} missing router(s)")
+            fix_summary["changed_files"].append("main.py")
             self._report(
                 f"Registered {router_fixes} backend router(s)",
                 scope="backend",
@@ -1111,10 +1671,24 @@ class DebuggerAgent:
         
         package_json_modified = False
         self._report("Scanning frontend files", scope="frontend")
+
+        promoted_envs = self._promote_env_example_files(frontend_path)
+        if promoted_envs:
+            fix_summary["files_fixed"] += len(promoted_envs)
+            fix_summary["changed_files"].extend(promoted_envs)
+            self._report(
+                f"Promoted {len(promoted_envs)} frontend env file(s) from template",
+                scope="frontend",
+                files_fixed=fix_summary["files_fixed"],
+                files_processed=fix_summary["files_processed"],
+            )
         
         try:
             for file in frontend_path.rglob("*"):
-                if file.is_file() and file.suffix in [".ts", ".tsx", ".json", ".css"]:
+                if file.is_file() and (
+                    file.suffix in [".ts", ".tsx", ".jsx", ".json", ".css"]
+                    or file.name.startswith("tailwind.config.")
+                ):
                     try:
                         rel_path = str(file.relative_to(frontend_path))
                         content = file.read_text(encoding="utf-8")
@@ -1215,7 +1789,13 @@ class DebuggerAgent:
         if match:
             target_file = frontend_path / match.group(1).replace("\\", "/")
 
-        if target_file and target_file.exists():
+        structural_frontend_error = bool(
+            re.search(r"Cannot find module ['\"]@tailwindcss/", build_output or "")
+            or 'Duplicate "key" attribute in JSX element' in (build_output or "")
+            or "<motion key={" in (build_output or "")
+        )
+
+        if target_file and target_file.exists() and not structural_frontend_error:
             rel_path = str(target_file.relative_to(frontend_path)).replace("\\", "/")
             original = target_file.read_text(encoding="utf-8", errors="replace")
             fixed = self.auto_fix_frontend_file(original, rel_path)
@@ -1246,9 +1826,10 @@ class DebuggerAgent:
             )
             if match.group(1).strip()
         }
+        react_namespace_error = "react is not defined" in runtime_text.lower()
         changed_files: list[str] = []
 
-        if missing_exports:
+        if missing_exports or react_namespace_error:
             for file in frontend_path.rglob("*"):
                 if not file.is_file() or file.suffix not in [".ts", ".tsx", ".js", ".jsx"]:
                     continue
@@ -1256,6 +1837,8 @@ class DebuggerAgent:
                     rel_path = str(file.relative_to(frontend_path)).replace("\\", "/")
                     original = file.read_text(encoding="utf-8", errors="replace")
                     repaired = self._repair_lucide_imports(original, missing_exports)
+                    if react_namespace_error and file.suffix in [".tsx", ".jsx"]:
+                        repaired = self._ensure_react_namespace_import(repaired)
                     repaired = self.auto_fix_frontend_file(repaired, rel_path)
                     if repaired != original:
                         file.write_text(repaired, encoding="utf-8")
@@ -1289,11 +1872,79 @@ class DebuggerAgent:
         Fast targeted repair pass used by preview when the backend fails to bind.
         """
         self._report("Analyzing backend startup failure", scope="backend")
+        runtime_text = runtime_output or ""
+        runtime_lower = runtime_text.lower()
+        database_changed_files: list[str] = []
+        if (
+            "database connection is not available" in runtime_lower
+            or "database unavailable" in runtime_lower
+            or "database not initialized" in runtime_lower
+            or "mongodb unavailable" in runtime_lower
+            or "cannot import name 'asynciomotordatabase' from 'app.database'" in runtime_lower
+            or 'cannot import name "asynciomotordatabase" from \'app.database\'' in runtime_lower
+            or ("service unavailable" in runtime_lower and "/api/" in runtime_lower)
+        ):
+            database_changed_files = self._repair_database_unavailable_backend(backend_path)
+            if database_changed_files:
+                return {
+                    "files_fixed": len(database_changed_files),
+                    "issues_found": 1,
+                    "changed_files": database_changed_files,
+                    "runtime_excerpt": runtime_text[-300:],
+                    "known_issue": "database_unavailable",
+                }
         summary = self.fix_project_backend(backend_path)
         return {
             "files_fixed": summary.get("files_fixed", 0),
             "issues_found": len(summary.get("syntax_errors", [])),
-            "runtime_excerpt": (runtime_output or "")[-300:],
+            "changed_files": summary.get("changed_files", []),
+            "runtime_excerpt": runtime_text[-300:],
+            "known_issue": (
+                "mongo_id_validation"
+                if "validationerror" in runtime_text.lower()
+                and "field required" in runtime_text.lower()
+                and "\nid\n" in runtime_text.lower()
+                and "_id" in runtime_text
+                else None
+            ),
+        }
+
+    def quick_fix_backend_request_error(self, backend_path: Path, runtime_output: str = "") -> dict:
+        """
+        Fast repair pass used when the browser reports API/runtime failures after
+        the backend has already started.
+        """
+        self._report("Analyzing backend request failure", scope="backend")
+        runtime_text = runtime_output or ""
+        runtime_lower = runtime_text.lower()
+        changed_files: list[str] = []
+
+        if (
+            "database connection is not available" in runtime_lower
+            or "database unavailable" in runtime_lower
+            or "database not initialized" in runtime_lower
+            or "mongodb unavailable" in runtime_lower
+            or ("service unavailable" in runtime_lower and "/api/" in runtime_lower)
+            or ("status=503" in runtime_lower and "/api/" in runtime_lower)
+        ):
+            changed_files = self._repair_database_unavailable_backend(backend_path)
+
+        if changed_files:
+            return {
+                "files_fixed": len(changed_files),
+                "issues_found": 1,
+                "changed_files": changed_files,
+                "runtime_excerpt": runtime_text[-300:],
+                "known_issue": "database_unavailable",
+            }
+
+        summary = self.fix_project_backend(backend_path)
+        return {
+            "files_fixed": summary.get("files_fixed", 0),
+            "issues_found": len(summary.get("syntax_errors", [])),
+            "changed_files": summary.get("changed_files", []),
+            "runtime_excerpt": runtime_text[-300:],
+            "known_issue": None,
         }
 
     def execute_preview(

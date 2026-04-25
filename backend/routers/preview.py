@@ -1,12 +1,14 @@
 import json
 import os
 import re
+import shutil
 import socket
 import subprocess
 import threading
 import time
 import sys
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from pathlib import Path
 from fastapi import APIRouter
 from fastapi import Body
@@ -67,7 +69,132 @@ _PREVIEW_STATE: dict = {
 }
 _LOG_LINES: list = []
 _STATE_LOCK = threading.Lock()
+_PROCESS_LOG_PIDS: set[int] = set()
 _PROJECT_FILE_HASHES: dict = {}   # project_id → MD5 of last-built file set
+_RUNTIME_REPORT_HISTORY: dict[str, float] = {}
+
+_PREVIEW_RUNTIME_PROBE_MARKER = "window.__codexaPreviewMonitorInstalled"
+_PREVIEW_RUNTIME_PROBE_SNIPPET = """<script>
+(() => {
+  if (window.__codexaPreviewMonitorInstalled) return;
+  window.__codexaPreviewMonitorInstalled = true;
+  const queue = [];
+  const signatures = [];
+
+  const formatValue = (value) => {
+    if (typeof value === "string") return value;
+    if (value instanceof Error) return value.stack || value.message || String(value);
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  };
+
+  const pushIssue = (type, rawMessage) => {
+    const message = String(rawMessage || "").trim();
+    if (!message) return;
+    const signature = `${type}:${message.slice(0, 280)}`;
+    if (signatures.includes(signature)) return;
+    signatures.push(signature);
+    if (signatures.length > 40) signatures.shift();
+    queue.push({ type, message: message.slice(0, 4000), ts: Date.now() });
+  };
+
+  window.addEventListener("error", (event) => {
+    pushIssue("window-error", event.message || formatValue(event.error) || "Unknown window error");
+  });
+
+  window.addEventListener("unhandledrejection", (event) => {
+    pushIssue("unhandledrejection", formatValue(event.reason) || "Unhandled promise rejection");
+  });
+
+  const originalConsoleError = console.error.bind(console);
+  console.error = (...args) => {
+    try {
+      pushIssue("console-error", args.map(formatValue).join(" "));
+    } catch {}
+    return originalConsoleError(...args);
+  };
+
+  if (typeof window.fetch === "function") {
+    const originalFetch = window.fetch.bind(window);
+    window.fetch = async (...args) => {
+      try {
+        const response = await originalFetch(...args);
+        const url = typeof args[0] === "string" ? args[0] : args[0]?.url || response.url || "";
+        if (response.status >= 500 || (url.includes("/api/") && response.status >= 400)) {
+          let body = "";
+          try {
+            body = await response.clone().text();
+          } catch {}
+          pushIssue("fetch-response", `${response.status} ${url} ${body.slice(0, 700)}`);
+        }
+        return response;
+      } catch (error) {
+        pushIssue("fetch-error", formatValue(error));
+        throw error;
+      }
+    };
+  }
+
+  if (typeof XMLHttpRequest !== "undefined") {
+    const originalOpen = XMLHttpRequest.prototype.open;
+    const originalSend = XMLHttpRequest.prototype.send;
+
+    XMLHttpRequest.prototype.open = function(method, url, ...rest) {
+      this.__codexaMeta = { method, url: String(url || "") };
+      return originalOpen.call(this, method, url, ...rest);
+    };
+
+    XMLHttpRequest.prototype.send = function(...args) {
+      this.addEventListener("loadend", () => {
+        try {
+          const meta = this.__codexaMeta || {};
+          const url = String(meta.url || this.responseURL || "");
+          if (this.status >= 500 || (url.includes("/api/") && this.status >= 400)) {
+            const body = typeof this.responseText === "string" ? this.responseText.slice(0, 700) : "";
+            pushIssue("xhr-response", `${this.status} ${meta.method || "GET"} ${url} ${body}`);
+          }
+        } catch {}
+      });
+      return originalSend.apply(this, args);
+    };
+  }
+
+  const flush = () => {
+    try {
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage(
+          {
+            source: "codexa-preview-monitor",
+            kind: "heartbeat",
+            href: window.location.href,
+            ts: Date.now(),
+          },
+          "*",
+        );
+      }
+
+      if (!queue.length || !window.parent || window.parent === window) return;
+      const issues = queue.splice(0, queue.length);
+      window.parent.postMessage(
+        {
+          source: "codexa-preview-monitor",
+          kind: "issues",
+          href: window.location.href,
+          ts: Date.now(),
+          issues,
+        },
+        "*",
+      );
+    } catch {}
+  };
+
+  window.setInterval(flush, 1000);
+  window.setTimeout(flush, 100);
+})();
+</script>"""
 
 STEP_LABELS: dict = {
     "init":             "Initializing",
@@ -104,6 +231,45 @@ def _debugger_log_reporter(message: str, payload: dict) -> None:
     elif scope == "backend":
         prefix = "[Preview][Debugger][Backend]"
     _log(f"{prefix} {message}")
+
+
+def _attach_process_log_streams(process: subprocess.Popen | None, label: str, line_handler=None) -> None:
+    if process is None:
+        return
+    pid = getattr(process, "pid", None)
+    if not isinstance(pid, int) or pid <= 0 or pid in _PROCESS_LOG_PIDS:
+        return
+    _PROCESS_LOG_PIDS.add(pid)
+
+    def _pump(stream, stream_name: str) -> None:
+        if stream is None:
+            return
+        try:
+            while True:
+                raw = stream.readline()
+                if not raw:
+                    break
+                text = (
+                    raw.decode("utf-8", errors="ignore").strip()
+                    if isinstance(raw, bytes)
+                    else str(raw).strip()
+                )
+                if text:
+                    _log(f"[{label}][{stream_name}] {text}")
+                    if line_handler:
+                        try:
+                            line_handler(text, stream_name)
+                        except Exception:
+                            pass
+        except Exception:
+            return
+
+    threading.Thread(target=_pump, args=(process.stdout, "stdout"), daemon=True).start()
+    threading.Thread(target=_pump, args=(process.stderr, "stderr"), daemon=True).start()
+
+
+def _is_static_html_frontend(frontend_path: Path) -> bool:
+    return (frontend_path / "index.html").exists() and not (frontend_path / "package.json").exists()
 
 
 def _advance(step_id: str) -> None:
@@ -177,6 +343,195 @@ def _hash_project_files(project_id: str) -> str:
         return h.hexdigest()
     except Exception:
         return ""
+
+
+def _promote_project_env_templates(project_id: str) -> list[str]:
+    """
+    Promote root-level backend/frontend `.env*.example` files into real env
+    files before preview starts, then persist those files back to Mongo so the
+    code panel can show them immediately.
+    """
+    try:
+        project_oid = ObjectId(project_id)
+    except Exception:
+        return []
+
+    docs = list(
+        files_col.find(
+            {"project_id": project_oid},
+            {"path": 1, "content": 1},
+        )
+    )
+    if not docs:
+        return []
+
+    env_example_docs = [
+        doc
+        for doc in docs
+        if isinstance(doc.get("path"), str)
+        and re.fullmatch(r"(backend|frontend)/\.env[^/]*\.example", doc["path"])
+    ]
+    if not env_example_docs:
+        return []
+
+    existing_paths = {
+        str(doc.get("path"))
+        for doc in docs
+        if isinstance(doc.get("path"), str)
+    }
+
+    sync_root = BASE_PREVIEW_DIR / project_id / "_env_prepare"
+    shutil.rmtree(sync_root, ignore_errors=True)
+    promoted_paths: list[str] = []
+    debugger = DebuggerAgent(verbose=False)
+
+    try:
+        for scope in ("backend", "frontend"):
+            scope_dir = sync_root / scope
+            scope_dir.mkdir(parents=True, exist_ok=True)
+
+            for doc in env_example_docs:
+                source_path = doc["path"]
+                if not source_path.startswith(f"{scope}/"):
+                    continue
+
+                file_name = source_path.split("/", 1)[1]
+                promoted_path = f"{scope}/{file_name[: -len('.example')]}"
+                if promoted_path in existing_paths:
+                    continue
+
+                (scope_dir / file_name).write_text(
+                    str(doc.get("content") or ""),
+                    encoding="utf-8",
+                )
+
+            created_names = debugger._promote_env_example_files(scope_dir)
+            if not created_names:
+                continue
+
+            now = datetime.utcnow()
+            for target_name in created_names:
+                target_path = f"{scope}/{target_name}"
+                target_file = scope_dir / target_name
+                try:
+                    target_content = target_file.read_text(
+                        encoding="utf-8",
+                        errors="replace",
+                    )
+                except Exception:
+                    continue
+
+                files_col.update_one(
+                    {"project_id": project_oid, "path": target_path},
+                    {
+                        "$set": {
+                            "content": target_content,
+                            "updated_at": now,
+                        },
+                        "$setOnInsert": {
+                            "project_id": project_oid,
+                            "path": target_path,
+                            "created_at": now,
+                        },
+                    },
+                    upsert=True,
+                )
+                existing_paths.add(target_path)
+                promoted_paths.append(target_path)
+    finally:
+        shutil.rmtree(sync_root, ignore_errors=True)
+
+    return promoted_paths
+
+
+def _persist_changed_preview_files(
+    project_id: str,
+    scope_root: Path,
+    scope_prefix: str,
+    changed_files: list[str] | None,
+) -> list[str]:
+    if not changed_files:
+        return []
+
+    try:
+        project_oid = ObjectId(project_id)
+    except Exception:
+        return []
+
+    persisted_paths: list[str] = []
+    now = datetime.utcnow()
+    for rel_path in changed_files:
+        rel = str(rel_path or "").strip().replace("\\", "/")
+        if not rel:
+            continue
+        full_path = scope_root / rel
+        if not full_path.exists() or not full_path.is_file():
+            continue
+        try:
+            content = full_path.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            continue
+        db_path = f"{scope_prefix}/{rel}"
+        files_col.update_one(
+            {"project_id": project_oid, "path": db_path},
+            {
+                "$set": {
+                    "content": content,
+                    "updated_at": now,
+                },
+                "$setOnInsert": {
+                    "project_id": project_oid,
+                    "path": db_path,
+                    "created_at": now,
+                },
+            },
+            upsert=True,
+        )
+        persisted_paths.append(db_path)
+    return persisted_paths
+
+
+def _inject_preview_runtime_probe(frontend_path: Path) -> bool:
+    index_file = frontend_path / "index.html"
+    if not index_file.exists():
+        return False
+
+    try:
+        original = index_file.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return False
+
+    if _PREVIEW_RUNTIME_PROBE_MARKER in original:
+        return False
+
+    if "</body>" in original:
+        updated = original.replace("</body>", f"{_PREVIEW_RUNTIME_PROBE_SNIPPET}\n</body>", 1)
+    else:
+        updated = original + "\n" + _PREVIEW_RUNTIME_PROBE_SNIPPET + "\n"
+
+    if updated == original:
+        return False
+
+    try:
+        index_file.write_text(updated, encoding="utf-8")
+        return True
+    except Exception:
+        return False
+
+
+def _runtime_issue_signature(project_id: str, issue_type: str, message: str) -> str:
+    normalized = f"{project_id}|{issue_type}|{message.strip().lower()[:400]}"
+    return normalized
+
+
+def _runtime_issue_on_cooldown(project_id: str, issue_type: str, message: str, cooldown_seconds: float = 8.0) -> bool:
+    signature = _runtime_issue_signature(project_id, issue_type, message)
+    now = time.time()
+    last_seen = _RUNTIME_REPORT_HISTORY.get(signature)
+    _RUNTIME_REPORT_HISTORY[signature] = now
+    if last_seen is None:
+        return False
+    return (now - last_seen) < cooldown_seconds
 
 
 def _fix_esm_config(rel: str, content: str) -> str:
@@ -537,13 +892,17 @@ api.interceptors.response.use(
         _log("[Preview] index.html was missing — injected default")
         written += 1
 
+    if _inject_preview_runtime_probe(frontend_path):
+        _log("[Preview] Injected runtime monitor into preview index.html")
+        written += 1
+
     return frontend_path, written
 
 
 # ──────────────────────────────────────────────────────────────────────────────
 # REBUILD BACKEND FILES
 # ──────────────────────────────────────────────────────────────────────────────
-def rebuild_backend(project_id: str) -> Path:
+def rebuild_backend(project_id: str) -> tuple[Path, bool]:
     files = list(files_col.find({"project_id": ObjectId(project_id)}))
     backend_path = BASE_PREVIEW_DIR / project_id / "backend"
     backend_path.mkdir(parents=True, exist_ok=True)
@@ -745,7 +1104,24 @@ def rebuild_backend(project_id: str) -> Path:
         count += 1
 
     if count == 0:
-        raise RuntimeError("No backend files found")
+        stub_main = backend_path / "main.py"
+        stub_main.write_text(
+            "\n".join(
+                [
+                    "from fastapi import FastAPI",
+                    "",
+                    'app = FastAPI(title="CODEXA Preview Backend")',
+                    "",
+                    '@app.get("/health")',
+                    "async def health():",
+                    '    return {"ok": True, "mode": "frontend_only_preview"}',
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        _log("[Preview] No backend files detected - generated preview-only backend stub")
+        return backend_path, True
 
     # Create .env from .env.example if missing
     env_file = backend_path / ".env"
@@ -756,7 +1132,7 @@ def rebuild_backend(project_id: str) -> Path:
     # Sanitize placeholder values so services don't crash on startup
     _sanitize_env_file(env_file)
 
-    return backend_path
+    return backend_path, True
 
 
 def _sanitize_env_file(env_file: Path) -> None:
@@ -1001,34 +1377,56 @@ _MOTION_KEY_PATTERNS = [
 ]
 
 
-def _repair_jsx_after_debugger(frontend_path: Path) -> int:
+def _repair_jsx_after_debugger(
+    frontend_path: Path,
+    debugger: DebuggerAgent | None = None,
+) -> int:
     """
-    Scan all .tsx files under frontend_path/src and fix LLM-generated
-    <motion key={x}.div> corruption that the debugger can re-introduce.
-    Returns the number of files that were modified.
+    Run a last safety sweep after debugger edits so preview can recover from
+    malformed motion JSX, duplicate key props, and missing optional Tailwind
+    plugins before retrying Vite.
     """
+    debugger = debugger or DebuggerAgent(verbose=False)
     src = frontend_path / "src"
-    if not src.is_dir():
-        return 0
-
     fixed = 0
-    for tsx in src.rglob("*.tsx"):
+
+    if src.is_dir():
+        for jsx_file in [*src.rglob("*.tsx"), *src.rglob("*.jsx")]:
+            try:
+                original = jsx_file.read_text(encoding="utf-8", errors="replace")
+            except Exception:
+                continue
+
+            text = original
+            for pattern, repl in _MOTION_KEY_PATTERNS:
+                text = pattern.sub(repl, text)
+            text = debugger._repair_motion_jsx(text)
+            text = debugger._dedupe_jsx_key_attributes(text)
+
+            if text != original:
+                try:
+                    jsx_file.write_text(text, encoding="utf-8")
+                    fixed += 1
+                    _log(f"[Preview] JSX repair: fixed {jsx_file.name}")
+                except Exception as e:
+                    _log(f"[Preview] JSX repair write error {jsx_file.name}: {e}")
+
+    for config_name in ("tailwind.config.js", "tailwind.config.cjs", "tailwind.config.mjs", "tailwind.config.ts"):
+        config_file = frontend_path / config_name
+        if not config_file.exists():
+            continue
         try:
-            original = tsx.read_text(encoding="utf-8", errors="replace")
+            original = config_file.read_text(encoding="utf-8", errors="replace")
         except Exception:
             continue
-
-        text = original
-        for pattern, repl in _MOTION_KEY_PATTERNS:
-            text = pattern.sub(repl, text)
-
+        text = debugger._repair_tailwind_plugin_requires(original)
         if text != original:
             try:
-                tsx.write_text(text, encoding="utf-8")
+                config_file.write_text(text, encoding="utf-8")
                 fixed += 1
-                _log(f"[Preview] JSX repair: fixed {tsx.name}")
+                _log(f"[Preview] Tailwind config repair: fixed {config_file.name}")
             except Exception as e:
-                _log(f"[Preview] JSX repair write error {tsx.name}: {e}")
+                _log(f"[Preview] Tailwind config repair write error {config_file.name}: {e}")
 
     return fixed
 
@@ -1249,7 +1647,7 @@ def run_project(project_id: str) -> dict:
             _fe_fut = _rb_pool.submit(rebuild_frontend, project_id)
             _be_fut = _rb_pool.submit(rebuild_backend, project_id)
             frontend_path, frontend_changed = _fe_fut.result()
-            backend_path = _be_fut.result()
+            backend_path, has_backend = _be_fut.result()
     except RuntimeError as e:
         _log(f"[Preview] Rebuild failed: {e}")
         _set_error(str(e))
@@ -1275,15 +1673,18 @@ def run_project(project_id: str) -> dict:
 
         # Re-apply JSX safety patches AFTER the debugger — it can re-introduce
         # broken patterns (e.g. <motion key={x}.div>) via LLM rewrites.
-        _jsx_n = _repair_jsx_after_debugger(frontend_path)
+        _jsx_n = _repair_jsx_after_debugger(frontend_path, preview_debugger)
         if _jsx_n:
             _log(f"[Preview] Post-debugger JSX repair: {_jsx_n} file(s) cleaned")
 
         _advance("validate_python")
-        try:
-            _run_python_fix_loop(backend_path, max_rounds=1)
-        except Exception as e:
-            _log(f"[Preview] Python fix loop error (non-fatal): {e}")
+        if has_backend:
+            try:
+                _run_python_fix_loop(backend_path, max_rounds=1)
+            except Exception as e:
+                _log(f"[Preview] Python fix loop error (non-fatal): {e}")
+        else:
+            _log("[Preview] Python validation skipped - no backend files found")
     else:
         _advance("fixing")
         _advance("validate_python")
@@ -1291,15 +1692,22 @@ def run_project(project_id: str) -> dict:
 
     # Always ensure backend essentials exist (config.py, database.py, __init__.py)
     # regardless of warm/cold path — the orchestrator may have skipped generating them.
-    _ensure_backend_essentials(backend_path)
+    if has_backend:
+        _ensure_backend_essentials(backend_path)
+    else:
+        _log("[Preview] Backend essentials skipped - project is frontend-only")
 
     # ── Step: pip + npm install IN PARALLEL (hash-cached — instant if unchanged)
     _advance("dependencies")
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        pip_f = pool.submit(_pip_install, backend_path)
-        npm_f = pool.submit(_npm_install, frontend_path)
-        pip_ok = pip_f.result()
-        npm_ok = npm_f.result()
+    if has_backend:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            pip_f = pool.submit(_pip_install, backend_path)
+            npm_f = pool.submit(_npm_install, frontend_path)
+            pip_ok = pip_f.result()
+            npm_ok = npm_f.result()
+    else:
+        pip_ok = True
+        npm_ok = _npm_install(frontend_path)
     _log(f"[Preview] Installs done — pip:{pip_ok}  npm:{npm_ok}")
 
     # ── Step: TypeScript check runs IN BACKGROUND after servers are up ───────
@@ -1320,6 +1728,7 @@ def run_project(project_id: str) -> dict:
                 uvicorn_module = str(rel.with_suffix("")).replace("\\", ".").replace("/", ".") + ":app"
 
     backend_start_excerpt = ""
+    backend_runtime_recovery = {"attempted": False, "buffer": []}
 
     def _spawn_backend(extra_args: list[str] | None = None, label: str = "Starting backend") -> None:
         nonlocal backend_start_excerpt
@@ -1354,6 +1763,71 @@ def run_project(project_id: str) -> dict:
         except subprocess.TimeoutExpired:
             _log("[Preview] Backend process alive after 3 s - waiting for port bind...")
 
+    def _backend_runtime_line_handler(text: str, stream_name: str) -> None:
+        if stream_name != "stderr":
+            return
+        buffer = backend_runtime_recovery["buffer"]
+        buffer.append(text)
+        if len(buffer) > 80:
+            del buffer[:-80]
+        if backend_runtime_recovery["attempted"]:
+            return
+
+        excerpt = "\n".join(buffer[-40:])
+        lower_excerpt = excerpt.lower()
+        is_mongo_validation_error = (
+            "validationerror" in lower_excerpt
+            and "field required" in lower_excerpt
+            and "\nid\n" in lower_excerpt
+            and "_id" in excerpt
+        )
+        if not is_mongo_validation_error:
+            return
+
+        backend_runtime_recovery["attempted"] = True
+
+        def _recover_backend_runtime() -> None:
+            global CURRENT_BACKEND_PROCESS
+            try:
+                retry_summary = preview_debugger.quick_fix_backend_runtime_error(
+                    backend_path,
+                    excerpt,
+                )
+                if not retry_summary.get("files_fixed"):
+                    _log("[Preview] Backend runtime error detected, but debugger found no automatic fix")
+                    return
+
+                persisted = _persist_changed_preview_files(
+                    project_id,
+                    backend_path,
+                    "backend",
+                    retry_summary.get("changed_files"),
+                )
+                if persisted:
+                    _log("[Preview] Persisted backend runtime recovery file(s): " + ", ".join(persisted))
+                _log(
+                    f"[Preview] Debugger detected backend runtime error and fixed {retry_summary['files_fixed']} file(s) - restarting backend"
+                )
+                if CURRENT_BACKEND_PROCESS and CURRENT_BACKEND_PROCESS.poll() is None:
+                    CURRENT_BACKEND_PROCESS.terminate()
+                    time.sleep(0.8)
+                _kill_port(BACKEND_PORT)
+                _spawn_backend(["--lifespan", "off"], label="Recovering backend")
+                if _wait_backend_port(20.0):
+                    if CURRENT_BACKEND_PROCESS and CURRENT_BACKEND_PROCESS.poll() is None:
+                        _attach_process_log_streams(
+                            CURRENT_BACKEND_PROCESS,
+                            "Preview][Backend",
+                            _backend_runtime_line_handler,
+                        )
+                    _log(f"[Preview] Backend runtime recovery successful on :{BACKEND_PORT}")
+                else:
+                    _log("[Preview] Backend runtime recovery failed to rebind the port")
+            except Exception as runtime_fix_error:
+                _log(f"[Preview] Backend runtime recovery failed (non-fatal): {runtime_fix_error}")
+
+        threading.Thread(target=_recover_backend_runtime, daemon=True).start()
+
     try:
         _spawn_backend()
         if CURRENT_BACKEND_PROCESS is None:
@@ -1386,9 +1860,13 @@ def run_project(project_id: str) -> dict:
     _advance("build_frontend")
     vite_bin = frontend_path / "node_modules" / ".bin" / "vite.cmd"
     dist_index = frontend_path / "dist" / "index.html"
+    is_static_frontend = _is_static_html_frontend(frontend_path)
     use_static = False
 
-    if is_warm_restart and dist_index.exists() and frontend_changed == 0:
+    if is_static_frontend:
+        _log("[Preview] Static HTML frontend detected - skipping Vite build")
+        use_static = True
+    elif is_warm_restart and dist_index.exists() and frontend_changed == 0:
         _log("[Preview] 🔄 Warm restart — dist already built, skipping vite build")
         use_static = True
     else:
@@ -1422,7 +1900,18 @@ def run_project(project_id: str) -> dict:
                 _log(f"[Preview] Full build log saved to: {frontend_path / '.vite-build.log'}")
                 try:
                     repair = preview_debugger.quick_fix_frontend_build_error(frontend_path, combined)
-                    if repair.get("files_fixed"):
+                    safety_fixes = _repair_jsx_after_debugger(frontend_path, preview_debugger)
+                    if safety_fixes:
+                        _log(f"[Preview] Frontend safety sweep cleaned {safety_fixes} file(s) before retry")
+                    if repair.get("files_fixed") or safety_fixes:
+                        persisted = _persist_changed_preview_files(
+                            project_id,
+                            frontend_path,
+                            "frontend",
+                            repair.get("changed_files") or [],
+                        )
+                        if persisted:
+                            _log("[Preview] Persisted frontend debugger fix(es): " + ", ".join(persisted))
                         _log(f"[Preview] Debugger applied {repair['files_fixed']} fast frontend fix(es) - retrying vite build")
                         retry = subprocess.run(
                             build_cmd_list,
@@ -1457,7 +1946,23 @@ def run_project(project_id: str) -> dict:
     vite_env["FORCE_COLOR"] = "0"
 
     try:
-        if use_static:
+        if is_static_frontend:
+            _log(f"[Preview] Starting static HTML server on :{FRONTEND_PORT}â€¦")
+            CURRENT_FRONTEND_PROCESS = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-m",
+                    "http.server",
+                    str(FRONTEND_PORT),
+                    "--bind",
+                    "0.0.0.0",
+                ],
+                cwd=str(frontend_path),
+                shell=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+        elif use_static:
             _log(f"[Preview] Starting vite preview (static) on :{FRONTEND_PORT}…")
             preview_cmd = ([str(vite_bin), "preview"] if vite_bin.exists()
                            else ["npx.cmd", "vite", "preview"])
@@ -1482,7 +1987,7 @@ def run_project(project_id: str) -> dict:
         return {"ok": False, "error": f"Frontend start error: {e}"}
 
     # ── Wait for backend AND frontend simultaneously ───────────────────────────
-    fe_timeout = 30.0 if use_static else 90.0
+    fe_timeout = 30.0 if (use_static or is_static_frontend) else 90.0
 
     def _wait_backend_port(timeout: float = 35.0) -> bool:
         """Wait for backend port, but bail early if the process has already died."""
@@ -1514,7 +2019,7 @@ def run_project(project_id: str) -> dict:
 
     # Handle frontend result
     if not frontend_port_ok:
-        if use_static:
+        if use_static and not is_static_frontend:
             # vite preview failed — kill it and try dev server
             _log("[Preview] vite preview failed to start — falling back to dev server")
             if CURRENT_FRONTEND_PROCESS and CURRENT_FRONTEND_PROCESS.poll() is None:
@@ -1545,11 +2050,19 @@ def run_project(project_id: str) -> dict:
             return {"ok": False, "error": f"Frontend failed: {err_text}"}
 
     _wait_for_http(f"http://127.0.0.1:{FRONTEND_PORT}", timeout=10)
+    if CURRENT_FRONTEND_PROCESS and CURRENT_FRONTEND_PROCESS.poll() is None:
+        _attach_process_log_streams(CURRENT_FRONTEND_PROCESS, "Preview][Frontend")
     _log(f"[Preview] Frontend ready on :{FRONTEND_PORT}")
 
     # Handle backend result
     backend_started = backend_port_ok
     if backend_port_ok:
+        if CURRENT_BACKEND_PROCESS and CURRENT_BACKEND_PROCESS.poll() is None:
+            _attach_process_log_streams(
+                CURRENT_BACKEND_PROCESS,
+                "Preview][Backend",
+                _backend_runtime_line_handler,
+            )
         _log(f"[Preview] Backend ready on :{BACKEND_PORT}")
     else:
         _log(f"[Preview] Backend not ready on :{BACKEND_PORT} (non-fatal, continuing frontend-only)")
@@ -1559,6 +2072,14 @@ def run_project(project_id: str) -> dict:
                 backend_start_excerpt,
             )
             if retry_summary.get("files_fixed"):
+                persisted = _persist_changed_preview_files(
+                    project_id,
+                    backend_path,
+                    "backend",
+                    retry_summary.get("changed_files"),
+                )
+                if persisted:
+                    _log("[Preview] Persisted backend startup recovery file(s): " + ", ".join(persisted))
                 _log(f"[Preview] Debugger applied {retry_summary['files_fixed']} fast backend fix(es) - retrying once with lifespan off")
                 if CURRENT_BACKEND_PROCESS and CURRENT_BACKEND_PROCESS.poll() is None:
                     CURRENT_BACKEND_PROCESS.terminate()
@@ -1567,6 +2088,12 @@ def run_project(project_id: str) -> dict:
                 _spawn_backend(["--lifespan", "off"], label="Retrying backend")
                 backend_started = _wait_backend_port(20.0)
                 if backend_started:
+                    if CURRENT_BACKEND_PROCESS and CURRENT_BACKEND_PROCESS.poll() is None:
+                        _attach_process_log_streams(
+                            CURRENT_BACKEND_PROCESS,
+                            "Preview][Backend",
+                            _backend_runtime_line_handler,
+                        )
                     _log(f"[Preview] Backend recovery successful on :{BACKEND_PORT}")
         except Exception as backend_retry_error:
             _log(f"[Preview] Backend recovery failed (non-fatal): {backend_retry_error}")
@@ -1711,6 +2238,13 @@ def run_project_for_mode(project_id: str, execution_mode: str = "local") -> dict
 def preview_start(project_id: str, payload: PreviewStartPayload | None = Body(default=None)):
     """Start preview build in a background thread. Returns immediately."""
     execution_mode = _normalize_execution_mode(payload.mode if payload else None)
+    _log(f"[Preview] Start request received for project {project_id} mode={execution_mode}")
+    promoted_env_paths = _promote_project_env_templates(project_id)
+    if promoted_env_paths:
+        _log(
+            "[Preview] Promoted env template(s) before preview: "
+            + ", ".join(promoted_env_paths)
+        )
     thread = threading.Thread(
         target=run_project_for_mode,
         args=(project_id, execution_mode),
@@ -1722,6 +2256,7 @@ def preview_start(project_id: str, payload: PreviewStartPayload | None = Body(de
         "status": "starting",
         "project_id": project_id,
         "execution_mode": execution_mode,
+        "promoted_env_paths": promoted_env_paths,
     }
 
 
@@ -1729,8 +2264,144 @@ def preview_start(project_id: str, payload: PreviewStartPayload | None = Body(de
 def preview_full(project_id: str, payload: PreviewStartPayload | None = Body(default=None)):
     """Blocking preview start — waits until ready. Kept for backwards compat."""
     execution_mode = _normalize_execution_mode(payload.mode if payload else None)
+    _log(f"[Preview] Full start request received for project {project_id} mode={execution_mode}")
+    promoted_env_paths = _promote_project_env_templates(project_id)
+    if promoted_env_paths:
+        _log(
+            "[Preview] Promoted env template(s) before blocking preview: "
+            + ", ".join(promoted_env_paths)
+        )
     result = run_project_for_mode(project_id, execution_mode)
-    return {"project_id": project_id, **result}
+    return {"project_id": project_id, "promoted_env_paths": promoted_env_paths, **result}
+
+
+@router.post("/preview/runtime-report/{project_id}")
+def preview_runtime_report(project_id: str, payload: dict | None = Body(default=None)):
+    execution_mode = _normalize_execution_mode((payload or {}).get("mode"))
+    issues = (payload or {}).get("issues") or []
+    if not isinstance(issues, list) or not issues:
+        return {"ok": True, "accepted": False, "files_fixed": 0}
+
+    with _STATE_LOCK:
+        current_phase = _PREVIEW_STATE.get("phase")
+        current_project_id = _PREVIEW_STATE.get("project_id")
+
+    if current_phase == "starting":
+        return {"ok": True, "accepted": False, "files_fixed": 0, "reason": "preview_starting"}
+
+    if current_project_id and current_project_id != project_id:
+        return {"ok": True, "accepted": False, "files_fixed": 0, "reason": "inactive_project"}
+
+    frontend_runtime_lines: list[str] = []
+    backend_runtime_lines: list[str] = []
+    accepted_count = 0
+
+    for issue in issues:
+        if not isinstance(issue, dict):
+            continue
+        issue_type = str(issue.get("type") or "runtime")
+        message = str(issue.get("message") or "").strip()
+        if not message:
+            continue
+        if _runtime_issue_on_cooldown(project_id, issue_type, message):
+            continue
+
+        accepted_count += 1
+        runtime_line = f"{issue_type}: {message}"
+        lower_line = runtime_line.lower()
+
+        if (
+            issue_type in {"fetch-response", "fetch-error", "xhr-response"}
+            or "/api/" in lower_line
+            or "database connection is not available" in lower_line
+            or "database unavailable" in lower_line
+            or "service unavailable" in lower_line
+            or "status=503" in lower_line
+        ):
+            backend_runtime_lines.append(runtime_line)
+
+        if (
+            issue_type in {"console-error", "window-error", "unhandledrejection"}
+            or "react is not defined" in lower_line
+            or "does not provide an export named" in lower_line
+            or "uncaught" in lower_line
+            or "syntaxerror" in lower_line
+            or "typeerror" in lower_line
+            or "referenceerror" in lower_line
+        ):
+            frontend_runtime_lines.append(runtime_line)
+
+    if accepted_count == 0:
+        return {"ok": True, "accepted": False, "files_fixed": 0, "reason": "cooldown"}
+
+    _log(
+        f"[Preview] Runtime report received for {project_id}: "
+        + " | ".join((frontend_runtime_lines + backend_runtime_lines)[:2])[:600]
+    )
+
+    preview_debugger = DebuggerAgent(verbose=False, reporter=_debugger_log_reporter)
+    frontend_path = BASE_PREVIEW_DIR / project_id / "frontend"
+    backend_path = BASE_PREVIEW_DIR / project_id / "backend"
+
+    total_files_fixed = 0
+    persisted_paths: list[str] = []
+    restart_required = False
+
+    if frontend_runtime_lines and frontend_path.exists():
+        frontend_summary = preview_debugger.quick_fix_frontend_runtime_error(
+            frontend_path,
+            "\n".join(frontend_runtime_lines),
+        )
+        if frontend_summary.get("files_fixed"):
+            total_files_fixed += int(frontend_summary.get("files_fixed", 0))
+            restart_required = True
+            persisted = _persist_changed_preview_files(
+                project_id,
+                frontend_path,
+                "frontend",
+                frontend_summary.get("changed_files") or [],
+            )
+            persisted_paths.extend(persisted)
+            if persisted:
+                _log("[Preview] Persisted frontend runtime fix(es): " + ", ".join(persisted))
+
+    if backend_runtime_lines and backend_path.exists():
+        backend_summary = preview_debugger.quick_fix_backend_request_error(
+            backend_path,
+            "\n".join(backend_runtime_lines),
+        )
+        if backend_summary.get("files_fixed"):
+            total_files_fixed += int(backend_summary.get("files_fixed", 0))
+            restart_required = True
+            persisted = _persist_changed_preview_files(
+                project_id,
+                backend_path,
+                "backend",
+                backend_summary.get("changed_files") or [],
+            )
+            persisted_paths.extend(persisted)
+            if persisted:
+                _log("[Preview] Persisted backend runtime fix(es): " + ", ".join(persisted))
+
+    if restart_required:
+        _log(
+            f"[Preview] Debugger repaired {total_files_fixed} runtime issue file(s) - restarting preview automatically"
+        )
+        threading.Thread(
+            target=run_project_for_mode,
+            args=(project_id, execution_mode),
+            daemon=True,
+        ).start()
+    else:
+        _log("[Preview] Runtime issue observed, but debugger found no automatic repair")
+
+    return {
+        "ok": True,
+        "accepted": True,
+        "files_fixed": total_files_fixed,
+        "persisted_paths": persisted_paths,
+        "restarting": restart_required,
+    }
 
 
 @router.get("/preview/events")
@@ -1786,6 +2457,7 @@ def preview_logs():
 
 @router.post("/preview/stop/{project_id}")
 def stop_preview(project_id: str):
+    _log(f"[Preview] Stop request received for project {project_id}")
     active_mode = _normalize_execution_mode(_PREVIEW_STATE.get("execution_mode"))
     active_project_id = _PREVIEW_STATE.get("project_id") or project_id
     stop_current_project()

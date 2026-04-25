@@ -1,4 +1,5 @@
 import asyncio
+import json
 
 from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
 from models.schemas import ChatPayload, ChatRenamePayload
@@ -30,6 +31,36 @@ chat_agent = ChatAgent()
 classifier = ClassifierAgent()
 pipeline = ProjectPipeline()
 edit_agent = EditAgent()
+
+
+def _small_project_message_content(payload: dict) -> str:
+    files = payload.get("files") if isinstance(payload, dict) else None
+    if isinstance(files, list):
+        for item in files:
+            if not isinstance(item, dict):
+                continue
+            filename = str(item.get("filename") or "").strip().lower()
+            content = str(item.get("content") or "")
+            if filename == "index.html" and content.strip():
+                return content
+        for item in files:
+            if not isinstance(item, dict):
+                continue
+            content = str(item.get("content") or "")
+            if content.strip():
+                return content
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def _clip_message(text: str, limit: int = 90) -> str:
+    compact = " ".join((text or "").split())
+    if len(compact) <= limit:
+        return compact
+    return compact[: limit - 1] + "…"
+
+
+def _chat_log(message: str) -> None:
+    print(f"[Chat] {message}", flush=True)
 
 
 def _memory_hint_for_edit(chat_id: str) -> str:
@@ -149,17 +180,24 @@ def chat(payload: ChatPayload):
 
     existing_project = get_project_by_chat_id(chat_id)
     has_project = existing_project is not None
+    _chat_log(
+        f"HTTP request chat_id={chat_id} has_project={has_project} msg='{_clip_message(user_message)}'"
+    )
 
     # ---------- Classify Intent ----------
     intent = classifier.classify_for_project(
         user_message, chat_id, has_project=has_project
     )
-    print("Classified Intent:", intent)
+    _chat_log(
+        f"HTTP classified chat_id={chat_id} type={intent.get('type')} reason={intent.get('reason')}"
+    )
     # ---------- PROJECT PIPELINE ----------
     if intent["type"] == "project":
-        
+        _chat_log(f"HTTP project pipeline started chat_id={chat_id}")
         pipeline_result = pipeline.run(chat_id, user_message)
-        print("Pipeline Result:", pipeline_result)
+        _chat_log(
+            f"HTTP project pipeline finished chat_id={chat_id} title='{pipeline_result.get('title', '')}'"
+        )
         # Store final message returned to the frontend
         final_reply = "Project Creation completed successfully."
 
@@ -184,6 +222,7 @@ def chat(payload: ChatPayload):
             project_id=project_id,
             structure=project_json["structure"]
         )
+        _chat_log(f"HTTP project saved chat_id={chat_id} project_id={project_id}")
 
         return {
             "ok": True,
@@ -194,11 +233,50 @@ def chat(payload: ChatPayload):
             "reply": final_reply,
         }
 
+    if intent["type"] == "small_project":
+        _chat_log(f"HTTP small project generation started chat_id={chat_id}")
+        small_project_result = pipeline.run_small_project(chat_id, user_message)
+        project_id = save_project(
+            user_id=user_id,
+            title=small_project_result["title"],
+            description=user_message,
+            chat_id=chat_id,
+            plan=None,
+            project_type="small_project",
+        )
+        update_chat_title(chat_id, user_id, small_project_result["title"])
+        save_files(
+            project_id=project_id,
+            structure=small_project_result["project"]["structure"]
+        )
+        save_message(
+            chat_id,
+            role="assistant",
+            content=_small_project_message_content(small_project_result["payload"]),
+            agent="chat",
+            project_id=project_id,
+        )
+        _chat_log(
+            f"HTTP small project saved chat_id={chat_id} project_id={project_id} title='{small_project_result.get('title', '')}'"
+        )
+
+        return {
+            "ok": True,
+            "type": "small_project",
+            "chat_id": chat_id,
+            "project_id": project_id,
+            "title": small_project_result["title"],
+            "reply": _small_project_message_content(small_project_result["payload"]),
+            "messages": get_chat_messages(chat_id)
+        }
+
     # ---------- CODE EDIT (existing project) ----------
     if intent.get("type") == "edit" and existing_project:
         pid = existing_project["_id"]
+        _chat_log(f"HTTP edit started chat_id={chat_id} project_id={pid}")
         edit_out = run_code_edit(pid, chat_id, user_message)
         if not edit_out["ok"]:
+            _chat_log(f"HTTP edit failed chat_id={chat_id} project_id={pid} err='{_clip_message(edit_out.get('error', 'Edit failed'))}'")
             save_message(chat_id, "assistant", edit_out.get("error", "Edit failed"), "edit")
             return {
                 "ok": False,
@@ -210,6 +288,9 @@ def chat(payload: ChatPayload):
                 "messages": get_chat_messages(chat_id),
             }
         save_message(chat_id, "assistant", edit_out["summary"], "edit")
+        _chat_log(
+            f"HTTP edit completed chat_id={chat_id} project_id={pid} changes={len(edit_out.get('changes') or [])}"
+        )
         return {
             "ok": True,
             "type": "edit",
@@ -222,7 +303,9 @@ def chat(payload: ChatPayload):
 
     # ---------- CONVERSATIONAL MODE ----------
     project_context = _project_context_for_chat(existing_project)
+    _chat_log(f"HTTP conversation started chat_id={chat_id}")
     reply = chat_agent.respond(chat_id, user_message, project_context=project_context)
+    _chat_log(f"HTTP conversation completed chat_id={chat_id}")
 
     return {
         "ok": True,
@@ -325,15 +408,20 @@ async def websocket_chat(websocket: WebSocket):
         save_message(chat_id, "user", message)
         existing_project = get_project_by_chat_id(chat_id)
         has_project = existing_project is not None
+        _chat_log(
+            f"WS request chat_id={chat_id} has_project={has_project} attachments={len(attachments)} msg='{_clip_message(message)}'"
+        )
         intent = classifier.classify_for_project(
             message, chat_id, has_project=has_project
         )
-        print("Classified Intent:", intent)
+        _chat_log(
+            f"WS classified chat_id={chat_id} type={intent.get('type')} reason={intent.get('reason')}"
+        )
 
         # PROJECT MODE
         if intent["type"] == "project":
-            pipeline = ProjectPipeline()
-            pipeline_result = await pipeline.run_pipeline_ws(websocket, chat_id, message)
+            _chat_log(f"WS project pipeline started chat_id={chat_id}")
+            pipeline_result = await ProjectPipeline().run_pipeline_ws(websocket, chat_id, message)
 
             final_reply = "Project Creation completed successfully."
             save_message(
@@ -363,17 +451,66 @@ async def websocket_chat(websocket: WebSocket):
                 "new_project_id": project_id,
                 "chat_title": pipeline_result["title"],
             })
-            print(f"New Project ID: {project_id}")
+            _chat_log(f"WS project saved chat_id={chat_id} project_id={project_id}")
+
+        elif intent["type"] == "small_project":
+            _chat_log(f"WS small project generation started chat_id={chat_id}")
+            await websocket.send_json(
+                {
+                    "type": "small_project_start",
+                    "ok": True,
+                    "chat_id": chat_id,
+                }
+            )
+            small_project_result = await asyncio.to_thread(
+                pipeline.run_small_project,
+                chat_id,
+                message,
+            )
+
+            project_id = save_project(
+                user_id=user_id,
+                title=small_project_result["title"],
+                description=message,
+                chat_id=chat_id,
+                plan=None,
+                project_type="small_project",
+            )
+            update_chat_title(chat_id, user_id, small_project_result["title"])
+            save_files(
+                project_id=project_id,
+                structure=small_project_result["project"]["structure"],
+            )
+            save_message(
+                chat_id,
+                role="assistant",
+                content=_small_project_message_content(small_project_result["payload"]),
+                agent="chat",
+                project_id=project_id,
+            )
+            await websocket.send_json(
+                {
+                    "type": "small_project_done",
+                    "ok": True,
+                    "chat_id": chat_id,
+                    "new_project_id": project_id,
+                    "chat_title": small_project_result["title"],
+                    "payload": small_project_result["payload"],
+                }
+            )
+            _chat_log(f"WS small project saved chat_id={chat_id} project_id={project_id}")
 
         # CODE EDIT — stream structured file updates
         elif intent.get("type") == "edit" and existing_project:
             pid = existing_project["_id"]
+            _chat_log(f"WS edit started chat_id={chat_id} project_id={pid}")
             await websocket.send_json(
                 {"type": "edit_start", "chat_id": chat_id, "project_id": pid}
             )
             edit_out = await asyncio.to_thread(run_code_edit, pid, chat_id, message)
             if not edit_out["ok"]:
                 err = edit_out.get("error", "Edit failed")
+                _chat_log(f"WS edit failed chat_id={chat_id} project_id={pid} err='{_clip_message(err)}'")
                 save_message(chat_id, "assistant", err, "edit")
                 await websocket.send_json({"type": "error", "message": err})
             else:
@@ -390,9 +527,13 @@ async def websocket_chat(websocket: WebSocket):
                         "changes": edit_out["changes"],
                     }
                 )
+                _chat_log(
+                    f"WS edit completed chat_id={chat_id} project_id={pid} changes={len(edit_out.get('changes') or [])}"
+                )
 
         # CONVERSATIONAL MODE — stream tokens like Cursor / ChatGPT
         else:
+            _chat_log(f"WS conversation started chat_id={chat_id}")
             await websocket.send_json(
                 {
                     "type": "conversation_start",
@@ -402,16 +543,25 @@ async def websocket_chat(websocket: WebSocket):
             )
             try:
                 project_context = _project_context_for_chat(existing_project)
-                async for piece in chat_agent.stream_respond(
-                    chat_id, message, project_context=project_context
-                ):
-                    if piece:
-                        await websocket.send_json(
-                            {
-                                "type": "conversation_delta",
-                                "text": piece,
-                            }
-                        )
+                payload = await chat_agent.generate_structured_payload(
+                    chat_id,
+                    message,
+                    project_context=project_context,
+                )
+                stream_text = chat_agent.payload_to_stream_text(payload)
+                if stream_text:
+                    await websocket.send_json(
+                        {
+                            "type": "conversation_delta",
+                            "text": stream_text,
+                        }
+                    )
+                await websocket.send_json(
+                    {
+                        "type": "conversation_structured",
+                        "payload": payload,
+                    }
+                )
                 await websocket.send_json(
                     {
                         "type": "conversation_done",
@@ -419,7 +569,9 @@ async def websocket_chat(websocket: WebSocket):
                         "chat_id": chat_id,
                     }
                 )
+                _chat_log(f"WS conversation completed chat_id={chat_id}")
             except Exception as stream_err:
+                _chat_log(f"WS conversation failed chat_id={chat_id} err='{_clip_message(str(stream_err))}'")
                 await websocket.send_json(
                     {
                         "type": "error",
@@ -430,9 +582,9 @@ async def websocket_chat(websocket: WebSocket):
         await websocket.close()
         
     except WebSocketDisconnect:
-        print("❌ Client disconnected safely")
+        _chat_log("WS client disconnected safely")
     except Exception as e:
-        print(f"❌ WebSocket error: {e}")
+        _chat_log(f"WS error err='{_clip_message(str(e))}'")
         await websocket.send_json({
             "type": "error",
             "message": str(e)

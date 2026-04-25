@@ -184,7 +184,15 @@ def get_project_by_id(project_id: str):
         return None
 
 
-def save_project(user_id: str, title: str, description: str, chat_id:str,plan:dict=None):
+def save_project(
+    user_id: str,
+    title: str,
+    description: str,
+    chat_id: str,
+    plan: dict = None,
+    *,
+    project_type: str = "fullstack",
+):
     project = {
     "user_id": user_id,
     "title": title,
@@ -192,7 +200,7 @@ def save_project(user_id: str, title: str, description: str, chat_id:str,plan:di
     "plan": plan,                     # planner steps (optional but useful)
     "chat_id": chat_id,               # link chat ↔ project
     "status": "generated",            # generated | editing | completed
-    "project_type": "fullstack",      # frontend | backend | fullstack
+    "project_type": project_type,     # frontend | backend | fullstack | small_project
     "created_at": datetime.utcnow(),
     "updated_at": datetime.utcnow()
 

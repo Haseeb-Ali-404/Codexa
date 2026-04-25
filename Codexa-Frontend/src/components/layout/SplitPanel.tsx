@@ -110,6 +110,12 @@ export function SplitPanel({ isOpen, onClose, previewUrl }: SplitPanelProps) {
     }, 400);
   };
 
+  useEffect(() => {
+    if (previewUrl) {
+      setIsPreviewLoading(true);
+    }
+  }, [previewUrl]);
+
   const handleCopy = () => {
     if (!activeCode) return;
     navigator.clipboard.writeText(activeCode);
@@ -214,7 +220,7 @@ export function SplitPanel({ isOpen, onClose, previewUrl }: SplitPanelProps) {
                   </div>
                   <div className="flex-1 mx-2">
                     <div className="h-3.5 bg-background/60 rounded text-[8px] flex items-center px-2 text-muted-foreground">
-                      localhost:3000
+                      {previewUrl || "localhost:3000"}
                     </div>
                   </div>
                 </div>

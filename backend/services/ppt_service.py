@@ -46,6 +46,70 @@ SLIDE_SEQUENCE = [
     ("future_scope", "Future Scope"),
 ]
 
+SECTION_TITLE_VARIANTS = [
+    {
+        "problem": "Problem",
+        "solution": "Solution",
+        "architecture": "Architecture",
+        "workflow": "Workflow",
+        "features": "Features",
+        "key_insights": "Key Insights",
+        "implementation_path": "Implementation Path",
+        "tech_stack": "Tech Stack",
+        "future_scope": "Future Scope",
+    },
+    {
+        "problem": "Challenge Landscape",
+        "solution": "Proposed Direction",
+        "architecture": "System Blueprint",
+        "workflow": "Execution Flow",
+        "features": "Product Highlights",
+        "key_insights": "Strategic Takeaways",
+        "implementation_path": "Delivery Roadmap",
+        "tech_stack": "Technology Foundation",
+        "future_scope": "Growth Outlook",
+    },
+    {
+        "problem": "Core Problem",
+        "solution": "Recommended Approach",
+        "architecture": "Platform Design",
+        "workflow": "Operational Workflow",
+        "features": "Capability Set",
+        "key_insights": "Executive Insights",
+        "implementation_path": "Rollout Plan",
+        "tech_stack": "Implementation Stack",
+        "future_scope": "Next Steps",
+    },
+]
+
+
+def _normalize_uml_required(raw: Any) -> list[str]:
+    if isinstance(raw, bool):
+        return ["component", "sequence"] if raw else []
+    if isinstance(raw, str):
+        candidates = [raw]
+    elif isinstance(raw, (list, tuple, set)):
+        candidates = list(raw)
+    else:
+        candidates = []
+
+    normalized = [
+        str(item).strip().lower().replace("-", "_")
+        for item in candidates
+        if str(item).strip()
+    ]
+    return [
+        item
+        for item in normalized
+        if item in {"component", "sequence", "use_case", "class", "deployment"}
+    ]
+
+
+def _title_variant_for_context(context: dict[str, Any]) -> dict[str, str]:
+    source = f"{context.get('title') or ''}|{context.get('description') or ''}"
+    index = sum(ord(ch) for ch in source) % len(SECTION_TITLE_VARIANTS)
+    return SECTION_TITLE_VARIANTS[index]
+
 
 def _complete_json(prompt: str) -> dict[str, Any] | None:
     gemini_key = os.getenv("GEMINI_API_KEY")
@@ -117,6 +181,7 @@ class PPTService:
             return {
                 "cached": True,
                 "file_path": cached["file_path"],
+                "gcs_url": (cached.get("meta") or {}).get("gcs_url"),
                 "slides": (cached.get("meta") or {}).get("titles", []),
                 "uses_uml": bool((cached.get("meta") or {}).get("uses_uml")),
             }
@@ -193,6 +258,7 @@ class PPTService:
     def _build_slide_plan(self, context: dict[str, Any]) -> dict[str, Any]:
         ai_plan = _complete_json(self._slide_prompt(context)) or {}
         slides_by_key: dict[str, dict[str, Any]] = {}
+        title_variant = _title_variant_for_context(context)
 
         for raw_slide in ai_plan.get("slides", []) if isinstance(ai_plan.get("slides"), list) else []:
             if not isinstance(raw_slide, dict):
@@ -207,23 +273,19 @@ class PPTService:
             ][:5]
             slides_by_key[key] = {
                 "key": key,
-                "title": (raw_slide.get("title") or dict(SLIDE_SEQUENCE)[key]).strip(),
+                "title": (raw_slide.get("title") or title_variant.get(key) or dict(SLIDE_SEQUENCE)[key]).strip(),
                 "subtitle": (raw_slide.get("subtitle") or "").strip(),
                 "bullets": bullets,
                 "visual_type": (raw_slide.get("visual_type") or "").strip().lower() or key,
                 "diagram_hint": (raw_slide.get("diagram_hint") or "").strip().lower(),
             }
 
-        fallback = self._fallback_slide_plan(context)
+        fallback = self._fallback_slide_plan(context, title_variant=title_variant)
         normalized_slides: list[dict[str, Any]] = []
         for key, default_title in SLIDE_SEQUENCE:
             normalized_slides.append(slides_by_key.get(key) or fallback[key])
 
-        uml_required = [
-            str(item).strip().lower().replace("-", "_")
-            for item in (ai_plan.get("uml_required") if isinstance(ai_plan.get("uml_required"), list) else [])
-            if str(item).strip()
-        ]
+        uml_required = _normalize_uml_required(ai_plan.get("uml_required"))
         if not uml_required:
             uml_required = ["component", "sequence"]
 
@@ -246,15 +308,22 @@ class PPTService:
             "Create a realistic project presentation plan for a software delivery platform.\n"
             "Return strict JSON with keys 'slides' and 'uml_required'.\n"
             "slides must be an array with exactly these keys in this order: "
-            "title, problem, solution, architecture, workflow, features, tech_stack, future_scope.\n"
+            "title, problem, solution, architecture, workflow, features, key_insights, implementation_path, tech_stack, future_scope.\n"
             "Each slide must have: key, title, subtitle, bullets (max 5 short bullets), visual_type, diagram_hint.\n"
             "Keep bullets concise and presentation-ready.\n"
+            "Make the deck feel tailored to the project. Use realistic delivery language, vary section titles slightly, vary the palette mood and framing, and use examples grounded in the supplied project context instead of generic software phrases.\n"
             f"Project context: {summary}\n"
         )
 
-    def _fallback_slide_plan(self, context: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    def _fallback_slide_plan(
+        self,
+        context: dict[str, Any],
+        *,
+        title_variant: dict[str, str],
+    ) -> dict[str, dict[str, Any]]:
         title = context.get("title") or "Project Presentation"
         description = context.get("description") or "A modular project solution prepared for review and demo."
+        title_focus = title.lower()
         tech_stack = context.get("tech_stack") or ["Frontend UI", "Backend API", "Storage"]
         features = context.get("features") or ["Automation", "Structured delivery", "Preview pipeline"]
         architecture_components = context.get("architecture_components") or ["Client Interface", "Application API", "Data Store"]
@@ -276,11 +345,11 @@ class PPTService:
             },
             "problem": {
                 "key": "problem",
-                "title": "Problem",
+                "title": title_variant["problem"],
                 "subtitle": "",
                 "bullets": [
+                    f"{title} needs a clearer story from problem to delivery",
                     "Teams need faster delivery without losing structure",
-                    "Context is often scattered across code and conversation",
                     "Preview and validation loops slow down iteration",
                 ],
                 "visual_type": "problem",
@@ -288,11 +357,11 @@ class PPTService:
             },
             "solution": {
                 "key": "solution",
-                "title": "Solution",
+                "title": title_variant["solution"],
                 "subtitle": "",
                 "bullets": [
+                    f"Position {title} as a cohesive delivery-ready solution",
                     "Combine planning, generation, and review in one workflow",
-                    "Use modular services for assets, code, and presentation outputs",
                     "Keep changes traceable and easy to iterate on",
                 ],
                 "visual_type": "solution",
@@ -300,7 +369,7 @@ class PPTService:
             },
             "architecture": {
                 "key": "architecture",
-                "title": "Architecture",
+                "title": title_variant["architecture"],
                 "subtitle": "",
                 "bullets": architecture_components[:5],
                 "visual_type": "uml",
@@ -308,7 +377,7 @@ class PPTService:
             },
             "workflow": {
                 "key": "workflow",
-                "title": "Workflow",
+                "title": title_variant["workflow"],
                 "subtitle": "",
                 "bullets": workflow_steps[:5],
                 "visual_type": "uml",
@@ -316,7 +385,7 @@ class PPTService:
             },
             "features": {
                 "key": "features",
-                "title": "Features",
+                "title": title_variant["features"],
                 "subtitle": "",
                 "bullets": features[:5],
                 "visual_type": "features",
@@ -324,33 +393,33 @@ class PPTService:
             },
             "key_insights": {
                 "key": "key_insights",
-                "title": "Key Insights",
+                "title": title_variant["key_insights"],
                 "subtitle": "",
                 "bullets": [
-                    "Modular architecture enables independent scaling",
-                    "Cached assets reduce redundant processing by 80%",
+                    f"{title} benefits from a modular architecture that can evolve incrementally",
+                    "Cached assets reduce redundant processing during repeated runs",
                     "Real-time preview loops accelerate iteration cycles",
-                    "Service decoupling improves fault tolerance",
+                    f"Project-specific workflows stay easier to reason about when {title_focus} concerns are separated",
                 ],
                 "visual_type": "insights",
                 "diagram_hint": "",
             },
             "implementation_path": {
                 "key": "implementation_path",
-                "title": "Implementation Path",
+                "title": title_variant["implementation_path"],
                 "subtitle": "",
                 "bullets": [
-                    "Phase 1: Core architecture and data models (Weeks 1-2)",
-                    "Phase 2: Service implementation and integration (Weeks 3-4)",
-                    "Phase 3: Preview pipeline and validation (Week 5)",
-                    "Phase 4: Testing, optimization, and deployment (Week 6)",
+                    f"Phase 1: Frame the core {title_focus} workflow and data contracts",
+                    "Phase 2: Implement services and integrate the happy path",
+                    "Phase 3: Validate preview/runtime flows and tighten failure handling",
+                    "Phase 4: Polish delivery quality, optimize, and prepare rollout",
                 ],
                 "visual_type": "timeline",
                 "diagram_hint": "",
             },
             "tech_stack": {
                 "key": "tech_stack",
-                "title": "Tech Stack",
+                "title": title_variant["tech_stack"],
                 "subtitle": "",
                 "bullets": tech_stack[:5],
                 "visual_type": "tech_stack",
@@ -358,7 +427,7 @@ class PPTService:
             },
             "future_scope": {
                 "key": "future_scope",
-                "title": "Future Scope",
+                "title": title_variant["future_scope"],
                 "subtitle": "",
                 "bullets": [
                     "Add deeper automation and richer reporting",
