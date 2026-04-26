@@ -1,70 +1,98 @@
 import { createContext, useContext, useEffect, useState } from "react";
-import {jwtDecode} from "jwt-decode";
+import { jwtDecode } from "jwt-decode";
+
+interface AuthUser {
+  name: string | null;
+  email: string | null;
+  avatarUrl?: string | null;
+}
 
 interface AuthContextType {
   token: string | null;
   userId: string | null;
-  user: {name: string | null, email: string | null} | null;
+  user: AuthUser | null;
   setToken: (token: string | null) => void;
+  setUser: (user: Partial<AuthUser>) => void;
   logout: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
-const emptyUser = { name: null, email: null };
+const emptyUser = { name: null, email: null, avatarUrl: null };
+
+const getAvatarStorageKey = (userId: string) => `codexa-avatar:${userId}`;
 
 export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
-  
   const [token, setTokenState] = useState<string | null>(
-    localStorage.getItem("token")
+    localStorage.getItem("token"),
   );
-  const [user, setUser] = useState(emptyUser);
-
+  const [user, setUserState] = useState<AuthUser>(emptyUser);
   const [userId, setUserId] = useState<string | null>(null);
 
-  // -------- Decode userId from token --------
-  const getUserIdFromToken = (token: string): string | null => {
+  const hydrateFromToken = (tokenValue: string | null) => {
+    if (!tokenValue) {
+      setUserState(emptyUser);
+      setUserId(null);
+      return;
+    }
+
     try {
-      const decoded: any = jwtDecode(token);
-      console.log(decoded);
-      setUser(decoded);
-      return decoded.user_id || null; // "sub" contains user_id
+      const decoded = jwtDecode<{
+        user_id?: string;
+        name?: string;
+        email?: string;
+      }>(tokenValue);
+      const nextUserId = decoded.user_id ?? null;
+
+      setUserState({
+        name: decoded.name ?? null,
+        email: decoded.email ?? null,
+        avatarUrl: nextUserId
+          ? localStorage.getItem(getAvatarStorageKey(nextUserId))
+          : null,
+      });
+      setUserId(nextUserId);
     } catch {
-      setUser(emptyUser);
-      return null;
+      setUserState(emptyUser);
+      setUserId(null);
     }
   };
 
-  // -------- Set token and decode user id --------
   const setToken = (newToken: string | null) => {
     if (newToken) {
       localStorage.setItem("token", newToken);
       setTokenState(newToken);
-      setUserId(getUserIdFromToken(newToken));
-    } else {
-      localStorage.removeItem("token");
-      setTokenState(null);
-      setUserId(null);
-      setUser(emptyUser);
+      hydrateFromToken(newToken);
+      return;
     }
+
+    localStorage.removeItem("token");
+    setTokenState(null);
+    setUserId(null);
+    setUserState(emptyUser);
   };
 
-  // -------- Logout --------
+  const setUser = (nextUser: Partial<AuthUser>) => {
+    setUserState((prev) => ({
+      ...prev,
+      name: nextUser.name ?? prev.name ?? null,
+      email: nextUser.email ?? prev.email ?? null,
+      avatarUrl: nextUser.avatarUrl ?? prev.avatarUrl ?? null,
+    }));
+  };
+
   const logout = () => {
     localStorage.removeItem("token");
     setTokenState(null);
     setUserId(null);
-    setUser(emptyUser);
+    setUserState(emptyUser);
   };
 
-  // Decode token on initial load
   useEffect(() => {
-    if (token) {
-      setUserId(getUserIdFromToken(token));
-    }
-  }, []);
+    hydrateFromToken(token);
+  }, [token]);
 
   return (
-    <AuthContext.Provider value={{ token, userId, setToken, logout, user }}>
+    <AuthContext.Provider value={{ token, userId, user, setToken, setUser, logout }}>
       {children}
     </AuthContext.Provider>
   );

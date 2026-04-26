@@ -1,15 +1,24 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { AlertCircle, BarChart3, Clock3, RefreshCw, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { API_BASE } from "@/lib/api";
 import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { UsageSummaryCards } from "./UsageSummaryCards";
 import { UsageTable } from "./UsageTable";
 import { UsageCharts } from "./UsageCharts";
 import {
   computeTotals,
+  formatUsageDateLabel,
+  getLatestUsageDate,
   transformUsageData,
   type UsageApiResponse,
 } from "./usageUtils";
@@ -20,11 +29,13 @@ interface UsageModalProps {
   isDark: boolean;
 }
 
+const ALL_DATES = "__all__";
+
 function UsageSkeleton({ isDark }: { isDark: boolean }) {
   const pulse = isDark ? "bg-white/[0.07]" : "bg-muted";
   return (
     <div className="space-y-6 animate-pulse">
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         {[1, 2, 3].map((i) => (
           <div
             key={i}
@@ -43,6 +54,7 @@ export function UsageModal({ open, onClose, isDark }: UsageModalProps) {
   const [error, setError] = useState<string | null>(null);
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
   const [payload, setPayload] = useState<UsageApiResponse | null>(null);
+  const [selectedDate, setSelectedDate] = useState<string>(ALL_DATES);
 
   const fetchUsage = useCallback(async () => {
     setLoading(true);
@@ -74,6 +86,21 @@ export function UsageModal({ open, onClose, isDark }: UsageModalProps) {
   }, [open, fetchUsage]);
 
   useEffect(() => {
+    const availableDates = payload?.available_dates ?? [];
+    const latestDate = getLatestUsageDate(availableDates);
+
+    setSelectedDate((current) => {
+      if (current === ALL_DATES) {
+        return latestDate ?? ALL_DATES;
+      }
+      if (current && availableDates.includes(current)) {
+        return current;
+      }
+      return latestDate ?? ALL_DATES;
+    });
+  }, [payload]);
+
+  useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -92,8 +119,24 @@ export function UsageModal({ open, onClose, isDark }: UsageModalProps) {
     }
   }, [open]);
 
-  const rows = transformUsageData(payload?.by_agent);
+  const daily = payload?.by_day ?? [];
+  const availableDates = payload?.available_dates ?? [];
+
+  const dailyMap = useMemo(() => {
+    const map = new Map<string, NonNullable<UsageApiResponse["by_day"]>[number]>();
+    for (const day of daily) {
+      map.set(day.date, day);
+    }
+    return map;
+  }, [daily]);
+
+  const activeDay = selectedDate !== ALL_DATES ? dailyMap.get(selectedDate) ?? null : null;
+  const scopedByAgent = activeDay?.by_agent ?? payload?.by_agent;
+  const rows = transformUsageData(scopedByAgent);
   const totals = computeTotals(rows);
+  const scopeLabel = activeDay ? formatUsageDateLabel(activeDay.date) : "All time";
+  const scopePhrase = activeDay ? scopeLabel : "all time";
+  const scopeKey = activeDay?.date ?? null;
 
   const modal = (
     <AnimatePresence>
@@ -120,7 +163,7 @@ export function UsageModal({ open, onClose, isDark }: UsageModalProps) {
               exit={{ opacity: 0, scale: 0.96, y: 16 }}
               transition={{ type: "spring", damping: 26, stiffness: 280 }}
               className={cn(
-                "pointer-events-auto relative w-full max-w-6xl max-h-[min(92vh,940px)] flex flex-col overflow-hidden rounded-[28px] border shadow-2xl",
+                "pointer-events-auto relative flex max-h-[min(92vh,940px)] w-full max-w-6xl flex-col overflow-hidden rounded-[28px] border shadow-2xl",
                 isDark
                   ? "border-white/10 bg-[#080a0f]/96 text-foreground shadow-black/45"
                   : "border-border/80 bg-background/96 text-foreground shadow-black/18",
@@ -141,7 +184,7 @@ export function UsageModal({ open, onClose, isDark }: UsageModalProps) {
                   </div>
                   <div className="min-w-0">
                     <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-primary/80">
-                      Server session
+                      Usage intelligence
                     </p>
                     <h2
                       id="usage-modal-title"
@@ -150,9 +193,10 @@ export function UsageModal({ open, onClose, isDark }: UsageModalProps) {
                       Usage analytics
                     </h2>
                     <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">
-                      LLM requests, token volume, and estimated cost across your active agents.
+                      LLM requests, token volume, and estimated cost across your agents, now
+                      filterable day by day from the recorded usage log.
                     </p>
-                    {updatedAt && !loading && (
+                    {updatedAt && !loading ? (
                       <div className="mt-3 inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/40 px-3 py-1 text-xs text-muted-foreground shadow-sm backdrop-blur">
                         <Clock3 className="h-3.5 w-3.5" />
                         <span className="tabular-nums">
@@ -164,33 +208,62 @@ export function UsageModal({ open, onClose, isDark }: UsageModalProps) {
                           })}
                         </span>
                       </div>
-                    )}
+                    ) : null}
                   </div>
                 </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    size="sm"
-                    className="rounded-full border border-border/60 bg-background/70 px-4 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md"
-                    disabled={loading}
-                    onClick={() => void fetchUsage()}
-                  >
-                    <RefreshCw
-                      className={cn("h-4 w-4 mr-2", loading && "animate-spin")}
-                    />
-                    Refresh
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="rounded-full shrink-0 transition-all duration-200 hover:bg-destructive/10 hover:text-destructive"
-                    onClick={onClose}
-                    aria-label="Close"
-                  >
-                    <X className="h-5 w-5" />
-                  </Button>
+                <div className="flex shrink-0 flex-col items-end gap-3">
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      className="rounded-full border border-border/60 bg-background/70 px-4 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md"
+                      disabled={loading}
+                      onClick={() => void fetchUsage()}
+                    >
+                      <RefreshCw
+                        className={cn("mr-2 h-4 w-4", loading && "animate-spin")}
+                      />
+                      Refresh
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="rounded-full shrink-0 transition-all duration-200 hover:bg-destructive/10 hover:text-destructive"
+                      onClick={onClose}
+                      aria-label="Close"
+                    >
+                      <X className="h-5 w-5" />
+                    </Button>
+                  </div>
+                  {availableDates.length > 0 ? (
+                    <div
+                      className={cn(
+                        "w-[280px] rounded-2xl border p-3 shadow-sm backdrop-blur-xl",
+                        isDark
+                          ? "border-white/10 bg-white/[0.035]"
+                          : "border-border/80 bg-background/80",
+                      )}
+                    >
+                      <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-primary/80">
+                        Date Filter
+                      </p>
+                      <Select value={selectedDate} onValueChange={setSelectedDate}>
+                        <SelectTrigger className="h-11 rounded-2xl border-primary/25 bg-background/80 text-sm shadow-[0_0_0_1px_rgba(139,92,246,0.18)] transition-all duration-200 focus:ring-primary/30">
+                          <SelectValue placeholder="Choose a day" />
+                        </SelectTrigger>
+                        <SelectContent className="z-[230] rounded-2xl border-border/70 bg-popover/95 backdrop-blur-xl">
+                          <SelectItem value={ALL_DATES}>All time</SelectItem>
+                          {[...availableDates].reverse().map((date) => (
+                            <SelectItem key={date} value={date}>
+                              {formatUsageDateLabel(date)}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  ) : null}
                 </div>
               </header>
 
@@ -211,11 +284,11 @@ export function UsageModal({ open, onClose, isDark }: UsageModalProps) {
                     </Button>
                   </div>
                 ) : rows.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center gap-2 rounded-3xl border border-dashed py-20 px-6 text-center border-border/80 bg-card/40">
+                  <div className="flex flex-col items-center justify-center gap-2 rounded-3xl border border-dashed border-border/80 bg-card/40 py-20 px-6 text-center">
                     <p className="text-sm font-medium text-foreground">No usage yet</p>
-                    <p className="text-xs text-muted-foreground max-w-sm">
-                      Run a chat or project pipeline to populate metrics. Totals reset when the
-                      backend restarts.
+                    <p className="max-w-sm text-xs text-muted-foreground">
+                      Run a chat or project pipeline to populate token metrics. This panel will
+                      start filling in as soon as usage records are written.
                     </p>
                     <Button variant="outline" size="sm" className="mt-2" onClick={() => void fetchUsage()}>
                       Refresh
@@ -231,8 +304,14 @@ export function UsageModal({ open, onClose, isDark }: UsageModalProps) {
                     }}
                     className="space-y-8"
                   >
-                    <UsageSummaryCards totals={totals} isDark={isDark} />
-                    <UsageCharts rows={rows} isDark={isDark} />
+                    <UsageSummaryCards totals={totals} isDark={isDark} scopeLabel={scopeLabel} />
+                    <UsageCharts
+                      rows={rows}
+                      daily={daily}
+                      selectedDate={scopeKey}
+                      scopeLabel={scopeLabel}
+                      isDark={isDark}
+                    />
                     <div>
                       <div className="mb-3 flex items-center justify-between gap-3">
                         <div>
@@ -240,7 +319,7 @@ export function UsageModal({ open, onClose, isDark }: UsageModalProps) {
                             Breakdown by agent
                           </h3>
                           <p className="mt-0.5 text-xs text-muted-foreground">
-                            Sort requests, tokens, and spend by agent.
+                            Sort requests, tokens, and spend by agent for {scopePhrase}.
                           </p>
                         </div>
                       </div>
@@ -250,7 +329,7 @@ export function UsageModal({ open, onClose, isDark }: UsageModalProps) {
                 )}
 
                 {loading && payload ? (
-                  <div className="absolute inset-0 z-10 bg-background/45 backdrop-blur-[3px] flex items-center justify-center pointer-events-none">
+                  <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/45 backdrop-blur-[3px] pointer-events-none">
                     <div className="rounded-full border border-border/70 bg-background/80 p-4 shadow-xl">
                       <RefreshCw className="h-8 w-8 animate-spin text-primary opacity-90" />
                     </div>

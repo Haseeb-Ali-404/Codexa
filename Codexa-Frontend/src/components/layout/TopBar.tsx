@@ -728,10 +728,18 @@ export function TopBar({
           >
             <div className="relative">
               <div className="w-7 h-7 rounded-full bg-gradient-to-br from-violet-500 via-purple-500 to-fuchsia-500 flex items-center justify-center text-xs font-bold text-white shadow-md shadow-purple-500/20 transition-all duration-200 group-hover:scale-105">
-                {user?.name
-                  ? user.name.charAt(0).toUpperCase() +
-                    user.name.charAt(1).toUpperCase()
-                  : "U"}
+                {user?.avatarUrl ? (
+                  <img
+                    src={user.avatarUrl}
+                    alt="Profile avatar"
+                    className="h-full w-full rounded-full object-cover"
+                  />
+                ) : user?.name ? (
+                  user.name.charAt(0).toUpperCase() +
+                  user.name.charAt(1).toUpperCase()
+                ) : (
+                  "U"
+                )}
               </div>
               <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-500 border-2 border-background" />
             </div>
@@ -762,10 +770,18 @@ export function TopBar({
                   <div className="px-4 py-3.5 border-b border-border/60 bg-secondary/30">
                     <div className="flex items-center gap-3">
                       <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-violet-500 via-purple-500 to-fuchsia-500 flex items-center justify-center text-lg font-bold text-white shadow-sm">
-                        {user?.name
-                          ? user.name.charAt(0).toUpperCase() +
-                            user.name.charAt(1).toUpperCase()
-                          : "U"}
+                        {user?.avatarUrl ? (
+                          <img
+                            src={user.avatarUrl}
+                            alt="Profile avatar"
+                            className="h-full w-full rounded-xl object-cover"
+                          />
+                        ) : user?.name ? (
+                          user.name.charAt(0).toUpperCase() +
+                          user.name.charAt(1).toUpperCase()
+                        ) : (
+                          "U"
+                        )}
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-semibold text-foreground truncate">

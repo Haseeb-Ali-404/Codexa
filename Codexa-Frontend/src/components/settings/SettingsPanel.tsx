@@ -1,6 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, type ChangeEvent } from "react";
 import { cn } from "@/lib/utils";
 import { GlassCard } from "@/components/ui/GlassCard";
+import { API_BASE } from "@/lib/api";
 import {
   SettingsPillSwitch,
   PillOptionGroup,
@@ -252,8 +253,15 @@ export function SettingsPanel({
   const [customColor, setCustomColor] = useState(() =>
     loadSetting("custom-color", "#3b82f6")
   );
+  const [displayName, setDisplayName] = useState("");
+  const [profileSaving, setProfileSaving] = useState(false);
+  const avatarInputRef = useRef<HTMLInputElement | null>(null);
 
-  const { user } = useAuth();
+  const { user, userId, token, setToken, setUser } = useAuth();
+
+  useEffect(() => {
+    setDisplayName(user?.name ?? "");
+  }, [user?.name, isOpen]);
 
   // Apply accent color to CSS variables
   useEffect(() => {
@@ -470,6 +478,88 @@ export function SettingsPanel({
     toast.success(`Response style set to ${styles[index]}`);
   };
 
+  const handleDisplayNameSave = async () => {
+    const nextName = displayName.trim();
+    const currentName = (user?.name ?? "").trim();
+    const currentEmail = (user?.email ?? "").trim();
+
+    if (!token || !currentEmail) {
+      toast.error("You need to be logged in");
+      return;
+    }
+    if (!nextName || nextName.length < 2) {
+      toast.error("Display name must be at least 2 characters");
+      setDisplayName(currentName);
+      return;
+    }
+    if (nextName === currentName) {
+      return;
+    }
+
+    setProfileSaving(true);
+    try {
+      const response = await fetch(`${API_BASE}/auth/profile`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          name: nextName,
+          email: currentEmail,
+        }),
+      });
+      const data = await response.json();
+
+      if (!response.ok || !data.ok) {
+        throw new Error(data.detail || "Could not update display name");
+      }
+
+      if (data.token) {
+        setToken(data.token);
+      }
+      toast.success("Display name updated");
+    } catch (error) {
+      setDisplayName(currentName);
+      toast.error(
+        error instanceof Error ? error.message : "Could not update display name",
+      );
+    } finally {
+      setProfileSaving(false);
+    }
+  };
+
+  const handleAvatarChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) {
+      return;
+    }
+    if (!userId) {
+      toast.error("You need to be logged in");
+      return;
+    }
+    if (!file.type.startsWith("image/")) {
+      toast.error("Choose an image file");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const avatarUrl = typeof reader.result === "string" ? reader.result : "";
+      if (!avatarUrl) {
+        toast.error("Could not read that image");
+        return;
+      }
+
+      localStorage.setItem(`codexa-avatar:${userId}`, avatarUrl);
+      setUser({ avatarUrl });
+      toast.success("Profile picture updated");
+    };
+    reader.onerror = () => toast.error("Could not read that image");
+    reader.readAsDataURL(file);
+    event.target.value = "";
+  };
+
   const getAccentColorClass = (index: number) => {
     const colors = [
       "bg-cyan-500",
@@ -557,18 +647,35 @@ export function SettingsPanel({
               <div className="space-y-4">
                 <h4 className="text-sm font-medium text-foreground">Profile</h4>
                 <div className="flex items-start gap-6 p-4 rounded-2xl border border-border/50 bg-secondary/20 dark:bg-white/[0.04]">
+                  <input
+                    ref={avatarInputRef}
+                    type="file"
+                    accept="image/*"
+                    onChange={handleAvatarChange}
+                    className="hidden"
+                  />
                   <div className="relative group">
                     <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-violet-500 via-purple-500 to-fuchsia-500 flex items-center justify-center text-2xl font-bold text-white shadow-lg">
-                      {user?.name
-                        ? user.name
-                            .split(/\s+/)
-                            .map((n) => n[0])
-                            .join("")
-                            .slice(0, 2)
-                            .toUpperCase()
-                        : "U"}
+                      {user?.avatarUrl ? (
+                        <img
+                          src={user.avatarUrl}
+                          alt="Profile avatar"
+                          className="h-full w-full rounded-2xl object-cover"
+                        />
+                      ) : (displayName || user?.name) ? (
+                        (displayName || user?.name || "")
+                          .split(/\s+/)
+                          .map((n) => n[0])
+                          .join("")
+                          .slice(0, 2)
+                          .toUpperCase()
+                      ) : "U"}
                     </div>
-                    <button className="absolute inset-0 rounded-2xl bg-background/80 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                    <button
+                      type="button"
+                      onClick={() => avatarInputRef.current?.click()}
+                      className="absolute inset-0 rounded-2xl bg-background/80 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
+                    >
                       <Camera className="w-6 h-6 text-foreground" />
                     </button>
                   </div>
@@ -579,9 +686,29 @@ export function SettingsPanel({
                       </label>
                       <input
                         type="text"
-                        defaultValue={user?.name ?? "User Name"}
+                        value={displayName}
+                        onChange={(e) => setDisplayName(e.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            void handleDisplayNameSave();
+                          }
+                        }}
+                        disabled={profileSaving}
                         className="w-full mt-1 px-3 py-2 rounded-full bg-background border border-border/50 text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
                       />
+                      <button
+                        type="button"
+                        onClick={() => void handleDisplayNameSave()}
+                        disabled={
+                          profileSaving ||
+                          displayName.trim().length < 2 ||
+                          displayName.trim() === (user?.name ?? "").trim()
+                        }
+                        className="mt-2 px-4 py-2 rounded-full bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors shadow-sm shadow-primary/15 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {profileSaving ? "Saving..." : "Save Name"}
+                      </button>
                     </div>
                     <div>
                       <label className="text-xs text-muted-foreground">
@@ -590,7 +717,8 @@ export function SettingsPanel({
                       <div className="flex items-center gap-2 mt-1">
                         <input
                           type="email"
-                          defaultValue={user?.email ?? "example@email.com"}
+                          defaultValue={user?.email ?? "john@example.com"}
+                          readOnly
                           className="flex-1 px-3 py-2 rounded-full bg-background border border-border/50 text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
                         />
                         <Mail className="w-4 h-4 text-muted-foreground" />
@@ -613,10 +741,11 @@ export function SettingsPanel({
                     <div className="relative mt-1">
                       <input
                         type={showPassword ? "text" : "password"}
-                        placeholder="••••••••"
+                        placeholder="........"
                         className="w-full px-3 py-2 pr-10 rounded-full bg-background border border-border/50 text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
                       />
                       <button
+                        type="button"
                         onClick={() => setShowPassword(!showPassword)}
                         className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                       >
@@ -634,7 +763,7 @@ export function SettingsPanel({
                     </label>
                     <input
                       type="password"
-                      placeholder="••••••••"
+                      placeholder="........"
                       className="w-full mt-1 px-3 py-2 rounded-full bg-background border border-border/50 text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
                     />
                   </div>

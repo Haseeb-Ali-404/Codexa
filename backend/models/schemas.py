@@ -20,6 +20,16 @@ class Login(BaseModel):
     password: str
 
 
+class ProfileUpdatePayload(BaseModel):
+    name: str
+    email: str
+
+
+class PasswordChangePayload(BaseModel):
+    current_password: str
+    new_password: str
+
+
 class ChatPayload(BaseModel):
     """
     Payload for sending a chat message.

@@ -8,6 +8,8 @@ export interface AgentUsageBackend {
 export interface UsageApiResponse {
   ok: boolean;
   by_agent: Record<string, AgentUsageBackend>;
+  by_day?: DailyUsageSummary[];
+  available_dates?: string[];
 }
 
 export interface AgentUsageRow {
@@ -17,6 +19,16 @@ export interface AgentUsageRow {
   input_tokens: number;
   output_tokens: number;
   cost: number;
+}
+
+export interface DailyUsageSummary {
+  date: string;
+  requests: number;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  cost: number;
+  by_agent: Record<string, AgentUsageBackend>;
 }
 
 export interface UsageTotals {
@@ -33,7 +45,9 @@ const AGENT_LABELS: Record<string, string> = {
   debugger: "Debugger",
   classifier: "Classifier",
   integrator: "Integrator",
+  orchestrator: "Orchestrator",
   architect: "Architect",
+  edit: "Edit",
   chat: "Chat",
   title: "Title",
   unknown: "Unknown",
@@ -78,6 +92,33 @@ export function computeTotals(rows: AgentUsageRow[]): UsageTotals {
       cost: 0,
     },
   );
+}
+
+export function getLatestUsageDate(
+  availableDates: string[] | undefined | null,
+): string | null {
+  if (!availableDates || availableDates.length === 0) return null;
+  return availableDates[availableDates.length - 1] ?? null;
+}
+
+export function formatUsageDateLabel(date: string): string {
+  const parsed = new Date(`${date}T00:00:00`);
+  if (Number.isNaN(parsed.getTime())) return date;
+  return parsed.toLocaleDateString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+export function formatUsageDateShort(date: string): string {
+  const parsed = new Date(`${date}T00:00:00`);
+  if (Number.isNaN(parsed.getTime())) return date;
+  return parsed.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+  });
 }
 
 /** 12000 → 12k, 1_500_000 → 1.5M */
