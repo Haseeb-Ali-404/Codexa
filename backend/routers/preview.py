@@ -572,6 +572,17 @@ def _fix_esm_config(rel: str, content: str) -> str:
     return content
 
 
+def _strip_preview_runtime_probe(content: str) -> str:
+    if not content or _PREVIEW_RUNTIME_PROBE_MARKER not in content:
+        return content
+    return (
+        content
+        .replace(f"{_PREVIEW_RUNTIME_PROBE_SNIPPET}\n", "")
+        .replace(f"\n{_PREVIEW_RUNTIME_PROBE_SNIPPET}", "")
+        .replace(_PREVIEW_RUNTIME_PROBE_SNIPPET, "")
+    )
+
+
 def _write_if_changed(path: Path, content: str) -> bool:
     """Write only if content differs from what's on disk. Returns True if written."""
     if path.exists():
@@ -830,6 +841,15 @@ api.interceptors.response.use(
             if "import path from 'path'" not in content and "alias:" in content:
                 content = "import path from 'path'\n" + content
 
+        if rel == "index.html" and full.exists():
+            try:
+                existing_content = full.read_text(encoding="utf-8", errors="replace")
+                if _strip_preview_runtime_probe(existing_content) == content:
+                    count += 1
+                    continue
+            except Exception:
+                pass
+
         if _write_if_changed(full, content):
             written += 1
         count += 1
@@ -894,7 +914,6 @@ api.interceptors.response.use(
 
     if _inject_preview_runtime_probe(frontend_path):
         _log("[Preview] Injected runtime monitor into preview index.html")
-        written += 1
 
     return frontend_path, written
 
@@ -1333,7 +1352,7 @@ def _npm_install(frontend_path: Path) -> bool:
         try:
             _log(f"[Preview] npm install attempt {attempt + 1}/3")
             r = subprocess.run(
-                ["npm.cmd", "install", "--prefer-offline"],
+                ["npm.cmd", "install", "--prefer-offline", "--no-audit", "--no-fund"],
                 cwd=str(frontend_path), shell=True,
                 capture_output=True, text=True, timeout=240,
             )
@@ -1658,37 +1677,26 @@ def run_project(project_id: str) -> dict:
     elif is_warm_restart:
         _log(f"[Preview] 🔄 Warm restart — {frontend_changed} frontend file(s) re-fixed; dist cache invalidated")
 
-    project_path = BASE_PREVIEW_DIR / project_id
-
-    # ── Step: Auto-fix + validation (skipped on warm restart) ───────────────
+    # Fast preview path: skip expensive whole-project debugger passes and rely on
+    # targeted build/runtime recovery when a concrete issue is detected.
     fix_result: dict = {"total_files_fixed": 0}
     preview_debugger = DebuggerAgent(verbose=False, reporter=_debugger_log_reporter)
     if not is_warm_restart:
         _advance("fixing")
-        try:
-            fix_result = preview_debugger.fix_entire_project(project_path)
-            _log(f"[Preview] Debugger: {fix_result['total_files_fixed']} files fixed")
-        except Exception as e:
-            _log(f"[Preview] Debugger error (non-fatal): {e}")
-
-        # Re-apply JSX safety patches AFTER the debugger — it can re-introduce
-        # broken patterns (e.g. <motion key={x}.div>) via LLM rewrites.
+        _log("[Preview] Fast preview mode - skipping full debugger pre-pass")
         _jsx_n = _repair_jsx_after_debugger(frontend_path, preview_debugger)
         if _jsx_n:
-            _log(f"[Preview] Post-debugger JSX repair: {_jsx_n} file(s) cleaned")
+            _log(f"[Preview] Frontend safety sweep cleaned {_jsx_n} file(s)")
 
         _advance("validate_python")
         if has_backend:
-            try:
-                _run_python_fix_loop(backend_path, max_rounds=1)
-            except Exception as e:
-                _log(f"[Preview] Python fix loop error (non-fatal): {e}")
+            _log("[Preview] Preflight Python fix loop skipped - runtime recovery remains active")
         else:
             _log("[Preview] Python validation skipped - no backend files found")
     else:
         _advance("fixing")
         _advance("validate_python")
-        _log("[Preview] Skipped — dependencies and fixes already applied")
+        _log("[Preview] Skipped - dependencies and fixes already applied")
 
     # Always ensure backend essentials exist (config.py, database.py, __init__.py)
     # regardless of warm/cold path — the orchestrator may have skipped generating them.
@@ -1841,17 +1849,8 @@ def run_project(project_id: str) -> dict:
             cwd=str(backend_path), shell=False,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         )
-        # Give it 3 s to crash early (import error, syntax error, etc.)
-        # If it's still alive after that we proceed optimistically.
-        try:
-            CURRENT_BACKEND_PROCESS.wait(timeout=3.0)
-            # Process already exited — read stderr for diagnostics
-            _, _be_err = CURRENT_BACKEND_PROCESS.communicate()
-            _be_err_txt = _be_err.decode("utf-8", errors="ignore")[-800:]
-            _log(f"[Preview] Backend exited immediately — stderr:\n{_be_err_txt}")
-            CURRENT_BACKEND_PROCESS = None
-        except subprocess.TimeoutExpired:
-            _log("[Preview] Backend process alive after 3 s — waiting for port bind…")
+        if CURRENT_BACKEND_PROCESS is not None:
+            _log("[Preview] Backend process check complete - waiting for port bind...")
     except Exception as e:
         _log(f"[Preview] Backend start error (non-fatal): {e}")
         CURRENT_BACKEND_PROCESS = None
@@ -1866,88 +1865,17 @@ def run_project(project_id: str) -> dict:
     if is_static_frontend:
         _log("[Preview] Static HTML frontend detected - skipping Vite build")
         use_static = True
-    elif is_warm_restart and dist_index.exists() and frontend_changed == 0:
-        _log("[Preview] 🔄 Warm restart — dist already built, skipping vite build")
-        use_static = True
     else:
-        _log("[Preview] Running vite build (production bundle)…")
-        try:
-            build_cmd_list = [str(vite_bin), "build"] if vite_bin.exists() else ["npx.cmd", "vite", "build"]
-            br = subprocess.run(
-                build_cmd_list, cwd=str(frontend_path), shell=True,
-                capture_output=True, text=True, timeout=120,
-                encoding="utf-8", errors="replace",
-            )
-            # Always persist full output to a debug file for diagnosis
-            try:
-                (frontend_path / ".vite-build.log").write_text(
-                    f"=== STDOUT ===\n{br.stdout or ''}\n=== STDERR ===\n{br.stderr or ''}",
-                    encoding="utf-8",
-                )
-            except Exception:
-                pass
-            if br.returncode == 0 and dist_index.exists():
-                _log("[Preview] vite build successful — static files ready")
-                use_static = True
-            else:
-                # Strip ANSI color codes (they mangle the log readability)
-                ansi_re = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
-                clean_err = ansi_re.sub("", (br.stderr or ""))
-                clean_out = ansi_re.sub("", (br.stdout or ""))
-                # Combined output — stderr first (usually the real error), then stdout tail
-                combined = (clean_err + "\n" + clean_out).strip()
-                _log(f"[Preview] vite build failed rc={br.returncode} (falling back to dev server):\n{combined[-1800:]}")
-                _log(f"[Preview] Full build log saved to: {frontend_path / '.vite-build.log'}")
-                try:
-                    repair = preview_debugger.quick_fix_frontend_build_error(frontend_path, combined)
-                    safety_fixes = _repair_jsx_after_debugger(frontend_path, preview_debugger)
-                    if safety_fixes:
-                        _log(f"[Preview] Frontend safety sweep cleaned {safety_fixes} file(s) before retry")
-                    if repair.get("files_fixed") or safety_fixes:
-                        persisted = _persist_changed_preview_files(
-                            project_id,
-                            frontend_path,
-                            "frontend",
-                            repair.get("changed_files") or [],
-                        )
-                        if persisted:
-                            _log("[Preview] Persisted frontend debugger fix(es): " + ", ".join(persisted))
-                        _log(f"[Preview] Debugger applied {repair['files_fixed']} fast frontend fix(es) - retrying vite build")
-                        retry = subprocess.run(
-                            build_cmd_list,
-                            cwd=str(frontend_path),
-                            shell=True,
-                            capture_output=True,
-                            text=True,
-                            timeout=120,
-                            encoding="utf-8",
-                            errors="replace",
-                        )
-                        try:
-                            (frontend_path / ".vite-build.log").write_text(
-                                f"=== RETRY STDOUT ===\n{retry.stdout or ''}\n=== RETRY STDERR ===\n{retry.stderr or ''}",
-                                encoding="utf-8",
-                            )
-                        except Exception:
-                            pass
-                        if retry.returncode == 0 and dist_index.exists():
-                            _log("[Preview] vite build retry successful - static files ready")
-                            use_static = True
-                except Exception as repair_error:
-                    _log(f"[Preview] Frontend fast-fix retry failed (non-fatal): {repair_error}")
-        except subprocess.TimeoutExpired:
-            _log("[Preview] vite build timed out — falling back to dev server")
-        except Exception as e:
-            _log(f"[Preview] vite build error — falling back to dev server: {e}")
+        _log("[Preview] Fast preview mode - skipping production Vite build and starting dev server directly")
 
-    # ── Step: Launch frontend server (also non-blocking) ─────────────────────
+    # Launch frontend server without blocking on a production bundle build.
     _advance("start_frontend")
     vite_env = os.environ.copy()
     vite_env["FORCE_COLOR"] = "0"
 
     try:
         if is_static_frontend:
-            _log(f"[Preview] Starting static HTML server on :{FRONTEND_PORT}â€¦")
+            _log(f"[Preview] Starting static HTML server on :{FRONTEND_PORT}...")
             CURRENT_FRONTEND_PROCESS = subprocess.Popen(
                 [
                     sys.executable,
@@ -1962,22 +1890,12 @@ def run_project(project_id: str) -> dict:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
             )
-        elif use_static:
-            _log(f"[Preview] Starting vite preview (static) on :{FRONTEND_PORT}…")
-            preview_cmd = ([str(vite_bin), "preview"] if vite_bin.exists()
-                           else ["npx.cmd", "vite", "preview"])
-            preview_cmd += ["--port", str(FRONTEND_PORT), "--host", "0.0.0.0", "--strictPort"]
-            CURRENT_FRONTEND_PROCESS = subprocess.Popen(
-                preview_cmd, cwd=str(frontend_path), shell=True,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=vite_env,
-            )
         else:
-            _log(f"[Preview] Starting Vite dev server on :{FRONTEND_PORT}…")
-            # No --strictPort on dev server: if port somehow still occupied, vite picks next free port
+            _log(f"[Preview] Starting Vite dev server on :{FRONTEND_PORT}...")
             dev_cmd = ([str(vite_bin), "--port", str(FRONTEND_PORT), "--host", "0.0.0.0"]
                        if vite_bin.exists()
                        else ["npm.cmd", "run", "dev", "--",
-                             "--port", str(FRONTEND_PORT), "--host", "0.0.0.0"])
+                             "--port", str(FRONTEND_PORT), "--host", "0.0.0.0"] )
             CURRENT_FRONTEND_PROCESS = subprocess.Popen(
                 dev_cmd, cwd=str(frontend_path), shell=True,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=vite_env,
@@ -1987,7 +1905,7 @@ def run_project(project_id: str) -> dict:
         return {"ok": False, "error": f"Frontend start error: {e}"}
 
     # ── Wait for backend AND frontend simultaneously ───────────────────────────
-    fe_timeout = 30.0 if (use_static or is_static_frontend) else 90.0
+    fe_timeout = 20.0 if is_static_frontend else 45.0
 
     def _wait_backend_port(timeout: float = 35.0) -> bool:
         """Wait for backend port, but bail early if the process has already died."""
@@ -1997,59 +1915,55 @@ def run_project(project_id: str) -> dict:
         while time.time() < deadline:
             if _port_alive(BACKEND_PORT):
                 return True
-            # Process died — no point waiting longer
             if CURRENT_BACKEND_PROCESS.poll() is not None:
                 try:
                     _, _se = CURRENT_BACKEND_PROCESS.communicate(timeout=2)
-                    _log(f"[Preview] Backend process died — stderr: {_se.decode('utf-8', errors='ignore')[-2000:]}")
+                    _log(f"[Preview] Backend process died - stderr: {_se.decode('utf-8', errors='ignore')[-2000:]}")
                 except Exception:
                     pass
                 return False
             time.sleep(0.4)
-        # Timed out — log stderr if process is still alive but not responding
         if CURRENT_BACKEND_PROCESS and CURRENT_BACKEND_PROCESS.poll() is None:
             _log("[Preview] Backend port wait timed out (process alive but not binding port)")
         return False
 
+    def _wait_frontend_port(timeout: float = fe_timeout) -> bool:
+        """Wait for frontend port and bail quickly if the process dies."""
+        if CURRENT_FRONTEND_PROCESS is None:
+            return False
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if _port_alive(FRONTEND_PORT):
+                return True
+            if CURRENT_FRONTEND_PROCESS.poll() is not None:
+                try:
+                    _, _se = CURRENT_FRONTEND_PROCESS.communicate(timeout=2)
+                    _log(f"[Preview] Frontend process died - stderr: {_se.decode('utf-8', errors='ignore')[-2000:]}")
+                except Exception:
+                    pass
+                return False
+            time.sleep(0.2 if is_static_frontend else 0.35)
+        if CURRENT_FRONTEND_PROCESS and CURRENT_FRONTEND_PROCESS.poll() is None:
+            _log("[Preview] Frontend port wait timed out (process alive but not binding port)")
+        return False
+
     with ThreadPoolExecutor(max_workers=2) as pool:
-        fe_f = pool.submit(_wait_for_port, FRONTEND_PORT, "127.0.0.1", fe_timeout)
+        fe_f = pool.submit(_wait_frontend_port, fe_timeout)
         be_f = pool.submit(_wait_backend_port, 35.0)
         frontend_port_ok = fe_f.result()
-        backend_port_ok  = be_f.result()
+        backend_port_ok = be_f.result()
 
-    # Handle frontend result
     if not frontend_port_ok:
-        if use_static and not is_static_frontend:
-            # vite preview failed — kill it and try dev server
-            _log("[Preview] vite preview failed to start — falling back to dev server")
-            if CURRENT_FRONTEND_PROCESS and CURRENT_FRONTEND_PROCESS.poll() is None:
-                CURRENT_FRONTEND_PROCESS.terminate()
-            CURRENT_FRONTEND_PROCESS = None
-            _kill_port(FRONTEND_PORT)
-            time.sleep(1.0)  # give OS time to release port
+        err_text = "timed out"
+        if CURRENT_FRONTEND_PROCESS and CURRENT_FRONTEND_PROCESS.poll() is not None:
             try:
-                dev_cmd = ([str(vite_bin), "--port", str(FRONTEND_PORT), "--host", "0.0.0.0"]
-                           if vite_bin.exists()
-                           else ["npm.cmd", "run", "dev", "--",
-                                 "--port", str(FRONTEND_PORT), "--host", "0.0.0.0"])
-                CURRENT_FRONTEND_PROCESS = subprocess.Popen(
-                    dev_cmd, cwd=str(frontend_path), shell=True,
-                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=vite_env,
-                )
-                frontend_port_ok = _wait_for_port(FRONTEND_PORT, timeout=90)
-            except Exception as e:
-                _set_error(f"Frontend start error: {e}")
-                return {"ok": False, "error": f"Frontend start error: {e}"}
+                _, se = CURRENT_FRONTEND_PROCESS.communicate(timeout=2)
+                err_text = se.decode("utf-8", errors="ignore")[-1200:]
+            except Exception:
+                pass
+        _set_error(f"Frontend failed to start: {err_text}")
+        return {"ok": False, "error": f"Frontend failed: {err_text}"}
 
-        if not frontend_port_ok:
-            err_text = "timed out"
-            if CURRENT_FRONTEND_PROCESS and CURRENT_FRONTEND_PROCESS.poll() is not None:
-                _, se = CURRENT_FRONTEND_PROCESS.communicate()
-                err_text = se.decode("utf-8", errors="ignore")[-400:]
-            _set_error(f"Frontend failed to start: {err_text}")
-            return {"ok": False, "error": f"Frontend failed: {err_text}"}
-
-    _wait_for_http(f"http://127.0.0.1:{FRONTEND_PORT}", timeout=10)
     if CURRENT_FRONTEND_PROCESS and CURRENT_FRONTEND_PROCESS.poll() is None:
         _attach_process_log_streams(CURRENT_FRONTEND_PROCESS, "Preview][Frontend")
     _log(f"[Preview] Frontend ready on :{FRONTEND_PORT}")

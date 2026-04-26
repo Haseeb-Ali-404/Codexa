@@ -98,6 +98,7 @@ export function ExecutionModeModal({
       description: "Faster startup and uses the tools already installed on your machine.",
       bullets: ["Faster startup", "Uses your system environment"],
       cta: "Run Locally",
+      recommended: true,
     },
     {
       mode: "docker" as ExecutionMode,
@@ -109,7 +110,6 @@ export function ExecutionModeModal({
       description: "Run your project in an isolated containerized environment with cleaner dependency boundaries.",
       bullets: ["Isolated environment", "More reliable execution", "Prevents dependency conflicts"],
       cta: "Run in Docker",
-      recommended: true,
     },
   ];
 
@@ -227,7 +227,7 @@ export function ExecutionModeModal({
 
             <div className="relative flex flex-col gap-3 border-t border-white/8 px-6 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-8">
               <div className="text-xs leading-5 text-slate-400">
-                Docker is highlighted because it keeps project dependencies isolated, while local mode remains available for faster iteration.
+                Local mode is highlighted because it starts faster for live preview, while Docker remains available when you want stricter isolation.
               </div>
               <div className="flex gap-3">
                 <button
@@ -278,19 +278,63 @@ export function PreviewPanel({
   const esRef = useRef<EventSource | null>(null);
   const iframeOpenedAt = useRef<number | null>(null);
   const committedUrlRef = useRef<string>("");
+  const heartbeatSeenRef = useRef(false);
+  const iframeRetryCountRef = useRef(0);
+  const heartbeatCheckTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearHeartbeatCheck = useCallback(() => {
+    if (heartbeatCheckTimerRef.current) {
+      clearTimeout(heartbeatCheckTimerRef.current);
+      heartbeatCheckTimerRef.current = null;
+    }
+  }, []);
+
+  const markPreviewReady = useCallback(() => {
+    clearHeartbeatCheck();
+    setIframeLoading(false);
+    if (iframeOpenedAt.current) {
+      setLoadedInMs(Date.now() - iframeOpenedAt.current);
+      iframeOpenedAt.current = null;
+    }
+  }, [clearHeartbeatCheck]);
 
   const applyUrl = useCallback((url: string, notifyParent: boolean) => {
     if (!url || committedUrlRef.current === url) return;
     committedUrlRef.current = url;
+    heartbeatSeenRef.current = false;
+    iframeRetryCountRef.current = 0;
+    clearHeartbeatCheck();
     setEffectiveUrl(url);
     setIframeLoading(true);
+    setLoadedInMs(null);
     iframeOpenedAt.current = Date.now();
     if (notifyParent) onUrlReady?.(url);
-  }, [onUrlReady]);
+  }, [clearHeartbeatCheck, onUrlReady]);
 
   useEffect(() => {
-    if (previewUrl) applyUrl(previewUrl, false);
-  }, [previewUrl, applyUrl]);
+    if (!previewUrl) {
+      committedUrlRef.current = "";
+      heartbeatSeenRef.current = false;
+      iframeRetryCountRef.current = 0;
+      clearHeartbeatCheck();
+      setEffectiveUrl("");
+      setIframeLoading(false);
+      setLoadedInMs(null);
+      return;
+    }
+    applyUrl(previewUrl, false);
+  }, [previewUrl, applyUrl, clearHeartbeatCheck]);
+
+  useEffect(() => {
+    committedUrlRef.current = "";
+    heartbeatSeenRef.current = false;
+    iframeRetryCountRef.current = 0;
+    clearHeartbeatCheck();
+    setEffectiveUrl("");
+    setIframeLoading(false);
+    setLoadedInMs(null);
+    setServerState(null);
+  }, [projectId, clearHeartbeatCheck]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -309,6 +353,9 @@ export function PreviewPanel({
       es.onmessage = (event) => {
         try {
           const data: ServerState = JSON.parse(event.data);
+          if (projectId && data.project_id && data.project_id !== projectId) {
+            return;
+          }
           setServerState(data);
 
           if (data.phase === "ready" && data.frontend_url) {
@@ -336,7 +383,7 @@ export function PreviewPanel({
       esRef.current = null;
       if (retryTimer) clearTimeout(retryTimer);
     };
-  }, [applyUrl, isOpen]);
+  }, [applyUrl, isOpen, projectId]);
 
   useEffect(() => {
     if (!iframeLoading || !effectiveUrl) return;
@@ -366,10 +413,15 @@ export function PreviewPanel({
     const handleRuntimeMessage = (event: MessageEvent) => {
       const payload = event.data;
       if (!payload || payload.source !== "codexa-preview-monitor") return;
-      if (payload.kind !== "issues" || !Array.isArray(payload.issues) || payload.issues.length === 0) {
+      if (iframeRef.current?.contentWindow && event.source !== iframeRef.current.contentWindow) {
         return;
       }
-      if (iframeRef.current?.contentWindow && event.source !== iframeRef.current.contentWindow) {
+      if (payload.kind === "heartbeat") {
+        heartbeatSeenRef.current = true;
+        markPreviewReady();
+        return;
+      }
+      if (payload.kind !== "issues" || !Array.isArray(payload.issues) || payload.issues.length === 0) {
         return;
       }
 
@@ -403,7 +455,11 @@ export function PreviewPanel({
       window.removeEventListener("message", handleRuntimeMessage);
       if (refreshTimer) clearTimeout(refreshTimer);
     };
-  }, [handleRefresh, isOpen, projectId, serverState?.execution_mode]);
+  }, [handleRefresh, isOpen, markPreviewReady, projectId, serverState?.execution_mode]);
+
+  useEffect(() => {
+    return () => clearHeartbeatCheck();
+  }, [clearHeartbeatCheck]);
 
   const handleRetry = useCallback(async () => {
     if (!projectId) return;
@@ -724,11 +780,24 @@ export function PreviewPanel({
                 sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox"
                 className="w-full h-full border-none bg-white"
                 onLoad={() => {
-                  setIframeLoading(false);
-                  if (iframeOpenedAt.current) {
-                    setLoadedInMs(Date.now() - iframeOpenedAt.current);
-                    iframeOpenedAt.current = null;
+                  if (heartbeatSeenRef.current) {
+                    markPreviewReady();
+                    return;
                   }
+
+                  clearHeartbeatCheck();
+                  heartbeatCheckTimerRef.current = setTimeout(() => {
+                    if (heartbeatSeenRef.current || !iframeRef.current || !effectiveUrl) {
+                      return;
+                    }
+                    if (iframeRetryCountRef.current >= 1) {
+                      return;
+                    }
+                    iframeRetryCountRef.current += 1;
+                    setIframeLoading(true);
+                    iframeOpenedAt.current = Date.now();
+                    iframeRef.current.src = effectiveUrl;
+                  }, 2200);
                 }}
               />
             </div>

@@ -52,7 +52,7 @@ export function DashboardLayout() {
   const [executionModeModalOpen, setExecutionModeModalOpen] = useState(false);
   const [selectedExecutionMode, setSelectedExecutionMode] = useState<ExecutionMode>(() => {
     const saved = localStorage.getItem(PREVIEW_MODE_STORAGE_KEY);
-    return saved === "local" || saved === "docker" ? saved : "docker";
+    return saved === "local" || saved === "docker" ? saved : "local";
   });
   const [pendingPreviewTarget, setPendingPreviewTarget] = useState<PreviewLaunchTarget | null>(null);
   const [pendingPreviewProjectId, setPendingPreviewProjectId] = useState<string | null>(null);
@@ -107,6 +107,7 @@ export function DashboardLayout() {
 
   useEffect(() => {
     if (!singleProjectId || singleProjectId === activePreviewProjectId) return;
+    setPreviewUrl("");
 
     const selectedProject = userProjects.find(
       (project: any) => project?._id === singleProjectId,
@@ -123,6 +124,7 @@ export function DashboardLayout() {
       return;
     }
 
+    setSelectedExecutionMode("local");
     setPendingPreviewProjectId(singleProjectId);
     setPendingPreviewTarget("auto");
     setExecutionModeModalOpen(true);
@@ -171,8 +173,6 @@ export function DashboardLayout() {
         throw new Error(`Preview start failed with status ${response.status}`);
       }
 
-      await loadProjectfiles(project_Id);
-
       if (target === "split") {
         setSplitOpen(true);
         setPreviewOpen(true);
@@ -186,6 +186,9 @@ export function DashboardLayout() {
       }
 
       setActivePreviewProjectId(project_Id);
+      void loadProjectfiles(project_Id).catch((error) => {
+        console.error("Project file load error:", error);
+      });
     } catch (e) {
       console.error("Preview start error:", e);
     } finally {
@@ -204,6 +207,7 @@ export function DashboardLayout() {
     if (selectedProject?.project_type === "small_project") {
       return;
     }
+    setSelectedExecutionMode("local");
     setPendingPreviewProjectId(project_Id);
     setPendingPreviewTarget(target);
     setExecutionModeModalOpen(true);
